@@ -937,7 +937,6 @@ string CalcSessionAllowParams( int order_type, double price_open, double price_c
   double price_zero; // точка безубыточности
   double dist_zero; // расстояние до точки безубыточности
   double dist_open; // расстояние открытия ордера
-  double dist_trande; // максимальное расстояние которое прошла цена за этот торговый день
   int orders_total; // общеее кол-во открытых ордеров  
   int orders_sessions; // общеее кол-во открытых ордеров в этом торговом дне
   int orders_session_last; // кол-во открытых ордеров в последней сессии
@@ -1312,8 +1311,8 @@ void DeletePingOrder()
     {
       if ( OrderSelect( i, SELECT_BY_POS ) && OrderType() == PING_ORDER_TYPE && OrderOpenPrice() == PING_PRICE && OrderLots() == lot_min )
       {
-        OrderDelete( OrderTicket() ); // удаляем ордер
-        break;
+        if ( OrderDelete( OrderTicket() ) ) // удаляем ордер
+          break;
       }
    }   
  }
@@ -1647,7 +1646,7 @@ void DayReboundProtect( int order_type, double price_open, double price_close )
 //| ShowInfo - показывает информацию
 //+-----------------------------------------------------------------+
 
-void ShowInfo( string symbol )
+void ShowInfo( string sym )
 { 
   int orders_cnt_buy, orders_cnt_sell;
   double orders_lots_buy,  orders_margin_buy,  orders_drawdown_buy,  orders_opv_buy;
@@ -1666,7 +1665,7 @@ void ShowInfo( string symbol )
   // 3. Показываем информацию о балансе, общей просадке, спред и плечо
   
   SetText( label_balance, "$" + DoubleToStr( AccountBalance(), 2 ) + "[" + DoubleToStr( LotsToMoney( orders_drawdown_buy + orders_drawdown_sell ) * 100.0 / AccountBalance(), 1 ) + "%]" );
-  SetText( label_spread, " " + DoubleToStr( AccountLeverage(), 0 ) + "/" + DoubleToStr( MarketInfo( symbol, MODE_SPREAD ), 0 ) );
+  SetText( label_spread, " " + DoubleToStr( AccountLeverage(), 0 ) + "/" + DoubleToStr( MarketInfo( sym, MODE_SPREAD ), 0 ) );
   
   // 4. Показываем линии стоп-лосса
   
@@ -2355,7 +2354,7 @@ int OrdersCnt( int order_type )
 //| OrdersModifyTP - изменяет TakeProfit для рыночных ордеров
 //+-----------------------------------------------------------------+
 
-void OrdersModifyTP( string symbol, int order_type, double price_close, double & orders_tp )
+void OrdersModifyTP( string sym, int order_type, double price_close, double & orders_tp )
 {
   if ( 0.0 < orders_tp )
   {
@@ -2572,10 +2571,10 @@ double BarCenter( string symbol, int timeframe, int shift )
 //| BarHeight - возращает высоту бара в пипсах
 //+-----------------------------------------------------------------+
 
-double BarHeight( string symbol, int timeframe, int shift )
+double BarHeight( string sym, int timeframe, int shift )
 {
   
-  return ( iHigh( symbol, timeframe, shift ) - iLow( symbol, timeframe, shift ) );
+  return ( iHigh( sym, timeframe, shift ) - iLow( sym, timeframe, shift ) );
 }
 //+-----------------------------------------------------------------+
 
@@ -2583,21 +2582,21 @@ double BarHeight( string symbol, int timeframe, int shift )
 //| HaveFractal - проверяет наличие фрактала некоторое время назад
 //+-----------------------------------------------------------------+
 
-bool HaveFractal( string symbol, int order_type, double price_open )
+bool HaveFractal( string sym, int order_type, double price_open )
 {
   int mode;
-  double if3, if4, if5, if6, if7;
+  double if3, if4, if5 /*, if6, if7 */;
   
   if ( OP_BUY == order_type ) // если покупка
     mode = MODE_LOWER; // фрактал вниз
   else
     mode = MODE_UPPER;
   
-  if3 = iFractals( symbol, fractal_timeframe, mode, 3 );
-  if4 = iFractals( symbol, fractal_timeframe, mode, 4 );
-  if5 = iFractals( symbol, fractal_timeframe, mode, 5 );
-  //if6 = iFractals( symbol, fractal_timeframe, mode, 6 );
-  //if7 = iFractals( symbol, fractal_timeframe, mode, 7 );
+  if3 = iFractals( sym, fractal_timeframe, mode, 3 );
+  if4 = iFractals( sym, fractal_timeframe, mode, 4 );
+  if5 = iFractals( sym, fractal_timeframe, mode, 5 );
+  //if6 = iFractals( sym, fractal_timeframe, mode, 6 );
+  //if7 = iFractals( sym, fractal_timeframe, mode, 7 );
   
   if ( OP_BUY == order_type )
   {
@@ -2609,9 +2608,9 @@ bool HaveFractal( string symbol, int order_type, double price_open )
          ( if6 > 0.0 && if6 < price_open ) ||
          ( if7 > 0.0 && if7 < price_open )*/ )
     {
-      /*if ( iHigh(  symbol, fractal_timeframe, 3 ) < price &&
-           iHigh(  symbol, fractal_timeframe, 4 ) < price &&
-           iHigh(  symbol, fractal_timeframe, 5 ) < price )*/
+      /*if ( iHigh(  sym, fractal_timeframe, 3 ) < price &&
+           iHigh(  sym, fractal_timeframe, 4 ) < price &&
+           iHigh(  sym, fractal_timeframe, 5 ) < price )*/
 
         //Print( "HaveFractal(", OrderTypeToStr( order_type ), ")", " price_open=", PriceToStr( price_open ), ", if3=", if3, ", if4=", if4, ", if5=", if5 );
         
@@ -2622,9 +2621,9 @@ bool HaveFractal( string symbol, int order_type, double price_open )
   {
     if ( if3 > price_open || if4 > price_open || if5 > price_open /*|| if6 > price_open || if7 > price_open */)
     {
-      /*if ( iLow( symbol, fractal_timeframe, 3 ) > price &&
-           iLow( symbol, fractal_timeframe, 4 ) > price &&
-           iLow( symbol, fractal_timeframe, 5 ) > price )*/
+      /*if ( iLow( sym, fractal_timeframe, 3 ) > price &&
+           iLow( sym, fractal_timeframe, 4 ) > price &&
+           iLow( sym, fractal_timeframe, 5 ) > price )*/
 
         //Print( "HaveFractal(", OrderTypeToStr( order_type ), ")", " price_open=", PriceToStr( price_open ), ", if3=", if3, ", if4=", if4, ", if5=", if5 );
         
@@ -2860,13 +2859,13 @@ double HLinePrice( string name )
 //| CreateLabel - создает метку на экране
 //+-----------------------------------------------------------------+
 
-void CreateLabel( string name, string text, int corner, int x_offset, double y_line, color text_color = CLR_NONE, int font_size = 10, string font_name = "Arial Black" )
+void CreateLabel( string name, string text, int corner, int x_offset, double y_line, color text_color = CLR_NONE, int fs = 10, string fn = "Arial Black" )
 {
   if ( -1 == ObjectFind( name ) )
   {
     if ( ObjectCreate( name, OBJ_LABEL, 0, 0, 0 ) )
     {
-      ObjectSetText( name, text, font_size, font_name, text_color );
+      ObjectSetText( name, text, fs, fn, text_color );
       ObjectSet( name, OBJPROP_CORNER, corner );
       ObjectSet( name, OBJPROP_XDISTANCE, x_offset );
       ObjectSet( name, OBJPROP_YDISTANCE, y_line );
