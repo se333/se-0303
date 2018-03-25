@@ -43,6 +43,8 @@ const string label_trend = "labelTrend";
 //| Static parameters
 //+------------------------------------------------------------------+
 
+datetime saved_time; // время текущего часа
+
 //+------------------------------------------------------------------+
 //| Создает метку на экране
 //+------------------------------------------------------------------+
@@ -95,6 +97,8 @@ bool calcTrendDimension(double &td)
   double high_array[DEF_TREND_MAX_HOURS_AGO];
   double low_array[DEF_TREND_MAX_HOURS_AGO];
 
+  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
+
   if (trend_hours_ago <= DEF_TREND_MAX_HOURS_AGO &&
       trend_hours_ago == CopyHigh(DEF_SYMBOL, DEF_TIMEFRAME, 0, trend_hours_ago, high_array) &&
       trend_hours_ago == CopyLow(DEF_SYMBOL, DEF_TIMEFRAME, 0, trend_hours_ago, low_array))
@@ -129,6 +133,21 @@ bool isValidTrendDimension(double td)
 {
   return td >= trend_min_dimension &&
          td <= trend_max_dimension;
+}
+
+//+------------------------------------------------------------------+
+//| Возвращает текущий час
+//+------------------------------------------------------------------+
+datetime getCurrentHour()
+{
+  datetime time_array[1];
+
+  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
+
+  if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
+    PRINT_LOG(LOG_Error, "can not get currunt hour array");
+
+  return time_array[0];
 }
 
 //+-----------------------------------------------------------------+
@@ -180,21 +199,35 @@ void OnDeinit(const int reason)
    EventKillTimer();
 
   }
+
+
 //+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
 {
+  datetime cur_time;
+
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
 
-  double td;
+  cur_time = getCurrentHour();
 
-  calcTrendDimension(td);
+  // 1. Проверяем новый час или начало торговли
+  if (cur_time != saved_time) // если новый час
+  {
+    double td;
 
-  setLabelText(DEF_CHART_ID, label_trend, "TREND: " +
-    priceToStr(trend_min_dimension) + "/" +
-    priceToStr(trend_max_dimension) + " " +
-    priceToStr(td));
+    saved_time = cur_time; // запоминаем время нового бара
+
+    calcTrendDimension(td);
+
+    setLabelText(DEF_CHART_ID, label_trend, "TREND[" +
+      IntegerToString(trend_hours_ago) + "]: " +
+      priceToStr(trend_min_dimension) + "/" +
+      priceToStr(trend_max_dimension) + "  " +
+      priceToStr(td));
+  }
+
 
 //---
 
