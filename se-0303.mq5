@@ -5,10 +5,23 @@
 //+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
+//| Trend parameters
+//+------------------------------------------------------------------+
+input int    trend_hours_ago     = 24;     // [24_48:2] продолжительность времени в часах начиная с текущего часа, которая анализируется для вычисления тренда
+input double trend_min_dimension = 0.0070; // минимальный размер тренда
+input double trend_max_dimension = 0.0280; // максимальный размер тренда
+
+//+------------------------------------------------------------------+
 //| Defines
 //+------------------------------------------------------------------+
-#define DEF_CHART_ID    0 // default chart identifier(0 - main chart window)
+#define DEF_CHART_ID              0 // default chart identifier(0 - main chart window)
+#define DEF_SYMBOL                "EURUSD"
+#define DEF_TIMEFRAME             PERIOD_H1
+#define DEF_TREND_MAX_HOURS_AGO   48
 
+//+------------------------------------------------------------------+
+//| Enums
+//+------------------------------------------------------------------+
 enum LogLevelEnum
 {
   LOG_Error,
@@ -22,13 +35,16 @@ const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
   PrintFormat("%s: %s:%d %s", log_level_names[log_level], __FUNCTION__, __LINE__, str);
 
 //+------------------------------------------------------------------+
-//| Input parameters
+//| Constant parameters
 //+------------------------------------------------------------------+
-input int      Input1 = 3;
-
+const string label_trend = "labelTrend";
 
 //+------------------------------------------------------------------+
-//| CreateLabel - создает метку на экране
+//| Static parameters
+//+------------------------------------------------------------------+
+
+//+------------------------------------------------------------------+
+//| Создает метку на экране
 //+------------------------------------------------------------------+
 void CreateLabel(long chart_id, string name, string text, int corner, int x, int y,
                  color tc = CLR_NONE, int fs = 9, string fn = "Arial")
@@ -53,13 +69,100 @@ void CreateLabel(long chart_id, string name, string text, int corner, int x, int
     PRINT_LOG(LOG_Error, "object '" + name + "' was found");
 }
 
+//+-----------------------------------------------------------------+
+//| Устанавливает текст в метке
+//+-----------------------------------------------------------------+
+void setLabelText(long chart_id, string name, string text)
+{
+  ObjectSetString(chart_id, name, OBJPROP_TEXT, text);
+}
+
+//+-----------------------------------------------------------------+
+//| Преобразовывает цену в строку
+//+-----------------------------------------------------------------+
+string priceToStr(double value)
+{
+  return DoubleToString(value, _Digits - 1);
+}
+
+//+------------------------------------------------------------------+
+//| Рассчитыват размер тренда
+//+------------------------------------------------------------------+
+bool calcTrendDimension(double &td)
+{
+  int hour;
+  double high, low;
+  double high_array[DEF_TREND_MAX_HOURS_AGO];
+  double low_array[DEF_TREND_MAX_HOURS_AGO];
+
+  if (trend_hours_ago <= DEF_TREND_MAX_HOURS_AGO &&
+      trend_hours_ago == CopyHigh(DEF_SYMBOL, DEF_TIMEFRAME, 0, trend_hours_ago, high_array) &&
+      trend_hours_ago == CopyLow(DEF_SYMBOL, DEF_TIMEFRAME, 0, trend_hours_ago, low_array))
+  {
+    high = 0;
+    low = low_array[0];
+
+    /* 1. Вычисляем максимальную и минимальную цену за указанный период времени */
+    for (hour = 0; hour < trend_hours_ago; hour++)
+    {
+      if (high_array[hour] > high)
+        high = high_array[hour];
+      if (low_array[hour] < low)
+        low = low_array[hour];
+    }
+
+    /* 2. Определяем расстояние между максимальным и минимальным значениями */
+    td = high - low;
+
+    return true;
+
+  } else
+    PRINT_LOG(LOG_Error, "can not recieve Low and High array");
+
+  return false;
+}
+
+//+------------------------------------------------------------------+
+//| Проверяет размер тренда на нахождение в разрешенном диапазоне
+//+------------------------------------------------------------------+
+bool isValidTrendDimension(double td)
+{
+  return td >= trend_min_dimension &&
+         td <= trend_max_dimension;
+}
+
+//+-----------------------------------------------------------------+
+//| HaveAligatorLipsSleep - алигатор собирается заснуть, подтянул губы
+//+-----------------------------------------------------------------+
+bool HaveAligatorLipsSleep( string symbol, int mode, int timeframe )
+{
+  //double value_jaw   = iAlligator( symbol, timeframe, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN, MODE_GATORJAW,   1 );
+  //double value_teeth = iAlligator( symbol, timeframe, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN, MODE_GATORTEETH, 1 );
+  //double value_lips  = iAlligator( symbol, timeframe, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN, MODE_GATORLIPS,  1 );
+
+  //SetText( label_debug, " jaw=" + DoubleToStr( value_jaw, Digits ) + " teeth=" + DoubleToStr( value_teeth, Digits ) + " lips=" + DoubleToStr( value_lips, Digits ) );
+  /*if ( mode == MODE_UPPER )
+  {
+    return ( value_lips < value_teeth && value_lips > value_jaw );
+  }
+  else if ( mode == MODE_LOWER )
+  {
+    return ( value_lips > value_teeth && value_lips < value_jaw );
+  }
+  else
+    Print( "ERROR: HaveAligatorLipsSleep(mode)" );*/
+
+  return ( false );
+}
+
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-  CreateLabel(DEF_CHART_ID, "runLabel", "Run: 12.4567", 0, 5, 20, clrYellow);
+  CreateLabel(DEF_CHART_ID, label_trend, "TREND:", 0, 5, 20, clrYellow);
+
 //--- create timer
 /*   EventSetTimer(60);*/
 
@@ -81,11 +184,22 @@ void OnDeinit(const int reason)
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
-  {
+{
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
+
+  double td;
+
+  calcTrendDimension(td);
+
+  setLabelText(DEF_CHART_ID, label_trend, "TREND: " +
+    priceToStr(trend_min_dimension) + "/" +
+    priceToStr(trend_max_dimension) + " " +
+    priceToStr(td));
+
 //---
 
-  }
+}
+
 //+------------------------------------------------------------------+
 //| Timer function                                                   |
 //+------------------------------------------------------------------+
@@ -168,3 +282,4 @@ void OnChartEvent(const int id,
 
   }
 //+------------------------------------------------------------------+
+
