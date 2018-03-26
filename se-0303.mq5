@@ -45,6 +45,8 @@ const string label_trend = "labelTrend";
 
 datetime saved_time; // время текущего часа
 
+int handle_alligator; // дескриптор для индикатора Alligator
+
 //+------------------------------------------------------------------+
 //| Создает метку на экране
 //+------------------------------------------------------------------+
@@ -151,27 +153,35 @@ datetime getCurrentHour()
 }
 
 //+-----------------------------------------------------------------+
-//| HaveAligatorLipsSleep - алигатор собирается заснуть, подтянул губы
+//| Проверяет что Alligator готов для открытия ордера
 //+-----------------------------------------------------------------+
-bool HaveAligatorLipsSleep( string symbol, int mode, int timeframe )
+bool isAlligatorPreparedForOpenOrder()
 {
-  //double value_jaw   = iAlligator( symbol, timeframe, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN, MODE_GATORJAW,   1 );
-  //double value_teeth = iAlligator( symbol, timeframe, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN, MODE_GATORTEETH, 1 );
-  //double value_lips  = iAlligator( symbol, timeframe, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN, MODE_GATORLIPS,  1 );
+  int i, cnt = 0;
 
-  //SetText( label_debug, " jaw=" + DoubleToStr( value_jaw, Digits ) + " teeth=" + DoubleToStr( value_teeth, Digits ) + " lips=" + DoubleToStr( value_lips, Digits ) );
-  /*if ( mode == MODE_UPPER )
-  {
-    return ( value_lips < value_teeth && value_lips > value_jaw );
-  }
-  else if ( mode == MODE_LOWER )
-  {
-    return ( value_lips > value_teeth && value_lips < value_jaw );
-  }
-  else
-    Print( "ERROR: HaveAligatorLipsSleep(mode)" );*/
+#define DEF_ALLIGATOR_TICK    1
+#define DEF_ALLIGATOR_BUFFERS 3
 
-  return ( false );
+  double jaw_array[DEF_ALLIGATOR_TICK], teeth_array[DEF_ALLIGATOR_TICK], lips_array[DEF_ALLIGATOR_TICK];
+
+  for (i = 0; i < DEF_ALLIGATOR_BUFFERS; i++)
+  {
+    if (i == 0)
+      cnt = CopyBuffer(handle_alligator, i, 0, 1, jaw_array);
+    else if (i == 1)
+      cnt = CopyBuffer(handle_alligator, i, 0, 1, teeth_array);
+    else if (i == 2)
+      cnt = CopyBuffer(handle_alligator, i, 0, 1, lips_array);
+
+    if (cnt < 0)
+    {
+      PRINT_LOG(LOG_Error, "can not copy iAlligator(" + IntegerToString(handle_alligator) +
+        ") data to the array " + IntegerToString(i));
+      return false;
+    }
+  }
+
+  return true;
 }
 
 //+------------------------------------------------------------------+
@@ -181,6 +191,8 @@ int OnInit()
 {
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
   CreateLabel(DEF_CHART_ID, label_trend, "TREND:", 0, 5, 20, clrYellow);
+
+  handle_alligator = iAlligator(DEF_SYMBOL, DEF_TIMEFRAME, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN);
 
 //--- create timer
 /*   EventSetTimer(60);*/
