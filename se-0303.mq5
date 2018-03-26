@@ -162,21 +162,17 @@ bool isAlligatorPreparedForOpenOrder()
 #define DEF_ALLIGATOR_TICK    1
 #define DEF_ALLIGATOR_BUFFERS 3
 
-  double jaw_array[DEF_ALLIGATOR_TICK], teeth_array[DEF_ALLIGATOR_TICK], lips_array[DEF_ALLIGATOR_TICK];
+  double arr[DEF_ALLIGATOR_TICK];
+  double alligator[DEF_ALLIGATOR_BUFFERS];
 
   for (i = 0; i < DEF_ALLIGATOR_BUFFERS; i++)
   {
-    if (i == 0)
-      cnt = CopyBuffer(handle_alligator, i, 0, 1, jaw_array);
-    else if (i == 1)
-      cnt = CopyBuffer(handle_alligator, i, 0, 1, teeth_array);
-    else if (i == 2)
-      cnt = CopyBuffer(handle_alligator, i, 0, 1, lips_array);
-
-    if (cnt < 0)
+    if (CopyBuffer(handle_alligator, i, 0, DEF_ALLIGATOR_TICK, arr) == DEF_ALLIGATOR_TICK)
     {
-      PRINT_LOG(LOG_Error, "can not copy iAlligator(" + IntegerToString(handle_alligator) +
-        ") data to the array " + IntegerToString(i));
+      alligator[i] = arr[0];
+    } else {
+      PRINT_LOG(LOG_Error, "can not copy iAlligator(" +
+        IntegerToString(handle_alligator) + ") data to the array " + IntegerToString(i));
       return false;
     }
   }
