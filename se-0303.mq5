@@ -5,6 +5,14 @@
 //+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
+//| Defines
+//+------------------------------------------------------------------+
+#define DEF_CHART_ID              0 // default chart identifier(0 - main chart window)
+#define DEF_SYMBOL                "EURUSD"
+#define DEF_TIMEFRAME             PERIOD_H1
+#define DEF_TREND_MAX_HOURS_AGO   48
+
+//+------------------------------------------------------------------+
 //| Trend parameters
 //+------------------------------------------------------------------+
 input int    trend_hours_ago     = 24;     // [24_48:2] продолжительность времени в часах начиная с текущего часа, которая анализируется для вычисления тренда
@@ -14,16 +22,21 @@ input double trend_max_dimension = 0.0280; // максимальный разм�
 double trend_dimension, trend_high, trend_low; // размер, а также максимальное и минимальное значение цены за время тренда
 
 //+------------------------------------------------------------------+
-//| Defines
+//| Alligator parameters
 //+------------------------------------------------------------------+
-#define DEF_CHART_ID              0 // default chart identifier(0 - main chart window)
-#define DEF_SYMBOL                "EURUSD"
-#define DEF_TIMEFRAME             PERIOD_H1
-#define DEF_TREND_MAX_HOURS_AGO   48
+input double k_alligator_open_mouth = 0.10; // [10%_20%:2] аллигатор с раскрытой пастью, т.е. между зубами, губами и челюстью не менее 10% от тренда
 
 //+------------------------------------------------------------------+
 //| Enums
 //+------------------------------------------------------------------+
+enum StatusLevelEnum
+{
+  ST_Error,
+  ST_WaitTrend,
+  ST_WaitAlligator,
+  ST_OpenOrder
+};
+
 enum LogLevelEnum
 {
   LOG_Error,
@@ -33,12 +46,15 @@ enum LogLevelEnum
 
 const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
 
-#define PRINT_LOG(log_level, str) \
-  PrintFormat("%s: %s:%d %s", log_level_names[log_level], __FUNCTION__, __LINE__, str);
+void showStatus(StatusLevelEnum level, string text);
+void printLog(LogLevelEnum level_log, string text);
+
+#define PRINT_LOG(log_level, str) printLog(log_level, str)
 
 //+------------------------------------------------------------------+
 //| Constant parameters
 //+------------------------------------------------------------------+
+const string label_status = "labelStatus";
 const string label_trend = "labelTrend";
 
 //+------------------------------------------------------------------+
@@ -84,11 +100,47 @@ void setLabelText(long chart_id, string name, string text)
 }
 
 //+-----------------------------------------------------------------+
+//| Показывает статус советника
+//+-----------------------------------------------------------------+
+void showStatus(StatusLevelEnum level_status, string text)
+{
+  setLabelText(DEF_CHART_ID, label_status, "STATUS[" +
+    TimeToString(saved_time, TIME_MINUTES) + "]: " +
+    IntegerToString(level_status, 2, '0') + " " + text);
+}
+
+//+-----------------------------------------------------------------+
+//| Выводит сообщение в журнал и в статус советника
+//+-----------------------------------------------------------------+
+void printLog(LogLevelEnum level_log, string text)
+{
+  PrintFormat("%s: %s:%d %s", log_level_names[level_log], __FUNCTION__, __LINE__, text);
+  showStatus(ST_Error, text);
+}
+
+//+-----------------------------------------------------------------+
 //| Преобразовывает цену в строку
 //+-----------------------------------------------------------------+
 string priceToStr(double value)
 {
   return DoubleToString(value, _Digits - 1);
+}
+
+//+------------------------------------------------------------------+
+//| Возвращает текущий час
+//+------------------------------------------------------------------+
+datetime getCurrentHour()
+{
+  datetime time_array[1];
+
+  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
+
+  if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
+  {
+    PRINT_LOG(LOG_Error, "can not get currunt hour array" + TimeToString(time_array[0]));
+  }
+
+  return time_array[0];
 }
 
 //+------------------------------------------------------------------+
@@ -132,25 +184,21 @@ bool calcTrendDimension(double &td, double &th, double &tl)
 //+------------------------------------------------------------------+
 //| Проверяет размер тренда на нахождение в разрешенном диапазоне
 //+------------------------------------------------------------------+
-bool isValidTrendDimension(double td)
+bool isValidTrendDimension()
 {
-  return td >= trend_min_dimension &&
-         td <= trend_max_dimension;
-}
+  if (trend_dimension < trend_min_dimension)
+  {
+    showStatus(ST_WaitTrend, "Trend is less than min value");
+    return false;
+  }
 
-//+------------------------------------------------------------------+
-//| Возвращает текущий час
-//+------------------------------------------------------------------+
-datetime getCurrentHour()
-{
-  datetime time_array[1];
+  if (trend_dimension > trend_max_dimension)
+  {
+    showStatus(ST_WaitTrend, "Trend is more than max value");
+    return false;
+  }
 
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-
-  if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
-    PRINT_LOG(LOG_Error, "can not get currunt hour array");
-
-  return time_array[0];
+  return true;
 }
 
 //+-----------------------------------------------------------------+
@@ -158,14 +206,21 @@ datetime getCurrentHour()
 //+-----------------------------------------------------------------+
 bool isAlligatorPreparedForOpenOrder()
 {
-  int i, cnt = 0;
+  int i;
 
-#define DEF_ALLIGATOR_TICK    1
-#define DEF_ALLIGATOR_BUFFERS 3
+#define DEF_ALLIGATOR_TICK      1
 
+#define DEF_JAW                 0
+#define DEF_TEETH               1
+#define DEF_LIPS                2
+#define DEF_ALLIGATOR_BUFFERS   3
+  bool   allow_open_order = true;
+  double dimension;
+  string str_order_type;
   double arr[DEF_ALLIGATOR_TICK];
-  double alligator[DEF_ALLIGATOR_BUFFERS];
+  double alligator[DEF_ALLIGATOR_BUFFERS] = { 0 };
 
+  /* Подготавливаем текущие значения цен */
   for (i = 0; i < DEF_ALLIGATOR_BUFFERS; i++)
   {
     if (CopyBuffer(handle_alligator, i, 0, DEF_ALLIGATOR_TICK, arr) == DEF_ALLIGATOR_TICK)
@@ -178,6 +233,35 @@ bool isAlligatorPreparedForOpenOrder()
     }
   }
 
+  /* Вычисляем размер минимально необходимого расстояния между челюстью, зубами и губами аллигатора */
+  dimension = trend_dimension * k_alligator_open_mouth;
+
+  /* Проверяем что расстояние между челюстью, зубами и губами аллигатора достаточное - пасть открыта */
+  if (alligator[DEF_JAW] < alligator[DEF_LIPS])
+  {
+    if (alligator[DEF_JAW] + dimension > alligator[DEF_TEETH] ||
+        alligator[DEF_TEETH] + dimension > alligator[DEF_LIPS])
+
+        allow_open_order = false;
+
+    str_order_type = "SELL";
+  } else {
+    if (alligator[DEF_JAW] - dimension < alligator[DEF_TEETH] ||
+        alligator[DEF_TEETH] - dimension < alligator[DEF_LIPS])
+
+        allow_open_order = false;
+
+    str_order_type = "BUY";
+  }
+
+  showStatus(ST_WaitAlligator, "D: " + priceToStr(dimension) +
+      " J: " + priceToStr(alligator[DEF_JAW]) +
+      " T: " + priceToStr(alligator[DEF_TEETH]) +
+      " L: " + priceToStr(alligator[DEF_LIPS]) +
+      str_order_type + " " + IntegerToString(allow_open_order));
+
+    /*showStatus(ST_WaitAlligator, "wait for Alligator will open mouth for " + order_type);*/
+
   return true;
 }
 
@@ -187,7 +271,9 @@ bool isAlligatorPreparedForOpenOrder()
 int OnInit()
 {
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-  CreateLabel(DEF_CHART_ID, label_trend, "TREND:", 0, 5, 20, clrYellow);
+
+  CreateLabel(DEF_CHART_ID, label_status, "STATUS:", 0, 5, 20, clrYellow);
+  CreateLabel(DEF_CHART_ID, label_trend, "TREND:", 0, 5, 40, clrYellow);
 
   handle_alligator = iAlligator(DEF_SYMBOL, DEF_TIMEFRAME, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN);
 
@@ -233,6 +319,11 @@ void OnTick()
       priceToStr(trend_min_dimension) + "/" +
       priceToStr(trend_max_dimension) + "  " +
       priceToStr(trend_dimension));
+
+      if (isValidTrendDimension() &&
+          isAlligatorPreparedForOpenOrder()) {}
+
+        /* showStatus(ST_OpenOrder, "Open order"); */
   }
 
 
