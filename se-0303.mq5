@@ -11,6 +11,8 @@ input int    trend_hours_ago     = 24;     // [24_48:2] продолжитель
 input double trend_min_dimension = 0.0070; // минимальный размер тренда
 input double trend_max_dimension = 0.0280; // максимальный размер тренда
 
+double trend_dimension, trend_high, trend_low; // размер, а также максимальное и минимальное значение цены за время тренда
+
 //+------------------------------------------------------------------+
 //| Defines
 //+------------------------------------------------------------------+
@@ -92,10 +94,9 @@ string priceToStr(double value)
 //+------------------------------------------------------------------+
 //| Рассчитыват размер тренда
 //+------------------------------------------------------------------+
-bool calcTrendDimension(double &td)
+bool calcTrendDimension(double &td, double &th, double &tl)
 {
   int hour;
-  double high, low;
   double high_array[DEF_TREND_MAX_HOURS_AGO];
   double low_array[DEF_TREND_MAX_HOURS_AGO];
 
@@ -105,20 +106,20 @@ bool calcTrendDimension(double &td)
       trend_hours_ago == CopyHigh(DEF_SYMBOL, DEF_TIMEFRAME, 0, trend_hours_ago, high_array) &&
       trend_hours_ago == CopyLow(DEF_SYMBOL, DEF_TIMEFRAME, 0, trend_hours_ago, low_array))
   {
-    high = 0;
-    low = low_array[0];
+    th = 0;
+    tl = low_array[0];
 
     /* 1. Вычисляем максимальную и минимальную цену за указанный период времени */
     for (hour = 0; hour < trend_hours_ago; hour++)
     {
-      if (high_array[hour] > high)
-        high = high_array[hour];
-      if (low_array[hour] < low)
-        low = low_array[hour];
+      if (high_array[hour] > th)
+        th = high_array[hour];
+      if (low_array[hour] < tl)
+        tl = low_array[hour];
     }
 
     /* 2. Определяем расстояние между максимальным и минимальным значениями */
-    td = high - low;
+    td = th - tl;
 
     return true;
 
@@ -223,17 +224,15 @@ void OnTick()
   // 1. Проверяем новый час или начало торговли
   if (cur_time != saved_time) // если новый час
   {
-    double td;
-
     saved_time = cur_time; // запоминаем время нового бара
 
-    calcTrendDimension(td);
+    calcTrendDimension(trend_dimension, trend_high, trend_low);
 
     setLabelText(DEF_CHART_ID, label_trend, "TREND[" +
       IntegerToString(trend_hours_ago) + "]: " +
       priceToStr(trend_min_dimension) + "/" +
       priceToStr(trend_max_dimension) + "  " +
-      priceToStr(td));
+      priceToStr(trend_dimension));
   }
 
 
