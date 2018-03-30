@@ -129,18 +129,21 @@ string priceToStr(double value)
 //+------------------------------------------------------------------+
 //| Возвращает текущий час
 //+------------------------------------------------------------------+
-datetime getCurrentHour()
+bool getCurrentHour(datetime &dt)
 {
   datetime time_array[1];
 
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-
+    
   if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
   {
-    PRINT_LOG(LOG_Error, "can not get currunt hour array" + TimeToString(time_array[0]));
+    PRINT_LOG(LOG_Error, "can not get currunt hour array " + TimeToString(time_array[0]) + " Err:" +
+      IntegerToString(GetLastError()));
+     return false;
   }
 
-  return time_array[0];
+  dt = time_array[0]; 
+  return true;
 }
 
 //+------------------------------------------------------------------+
@@ -305,10 +308,8 @@ void OnTick()
 
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
 
-  cur_time = getCurrentHour();
-
   // 1. Проверяем новый час или начало торговли
-  if (cur_time != saved_time) // если новый час
+  if (getCurrentHour(cur_time) && cur_time != saved_time) // если новый час
   {
     saved_time = cur_time; // запоминаем время нового бара
 
