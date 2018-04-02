@@ -126,6 +126,29 @@ string priceToStr(double value)
   return DoubleToString(value, _Digits - 1);
 }
 
+//+-----------------------------------------------------------------+
+//| Преобразовывает тип ордера в строку
+//+-----------------------------------------------------------------+
+string orderTypeToStr(ENUM_ORDER_TYPE order_type)
+{
+  string str;
+  
+  switch (order_type)
+  {  
+    case ORDER_TYPE_BUY:             { str = "BUY"; } break;
+    case ORDER_TYPE_SELL:            { str = "SELL"; } break;
+    case ORDER_TYPE_BUY_LIMIT:       { str = "BUY_LIMIT"; } break;
+    case ORDER_TYPE_SELL_LIMIT:      { str = "SELL_LIMIT"; } break;
+    case ORDER_TYPE_BUY_STOP:        { str = "BUY_STOP"; } break;
+    case ORDER_TYPE_SELL_STOP:       { str = "SELL_STOP"; } break;
+    case ORDER_TYPE_BUY_STOP_LIMIT:  { str = "BUY_STOP_LIMIT"; } break;
+    case ORDER_TYPE_SELL_STOP_LIMIT: { str = "SELL_STOP_LIMIT"; } break;
+    case ORDER_TYPE_CLOSE_BY:        { str = "CLOSE_BY"; } break;
+    default:                         { str = "INVALID ORDER TYPE"; } 
+  }
+  return str;
+}
+
 //+------------------------------------------------------------------+
 //| Возвращает текущий час
 //+------------------------------------------------------------------+
@@ -220,7 +243,7 @@ bool isAlligatorPreparedForOpenOrder()
   bool   allow_open_order = true;
   double dimension;
   string str_order_type;
-  ENUM_ORDER_TYPE orderType;
+  ENUM_ORDER_TYPE order_type;
   double arr[DEF_ALLIGATOR_TICK];
   double alligator[DEF_ALLIGATOR_BUFFERS] = { 0 };
 
@@ -248,15 +271,14 @@ bool isAlligatorPreparedForOpenOrder()
 
         allow_open_order = false;
 
-    orderType; =ORDER_TYPE_BUY_LIMIT;   // order type
-    str_order_type = "SELL";
+    order_type = ORDER_TYPE_SELL_LIMIT;
   } else {
     if (alligator[DEF_JAW] - dimension < alligator[DEF_TEETH] ||
         alligator[DEF_TEETH] - dimension < alligator[DEF_LIPS])
 
         allow_open_order = false;
-
-    str_order_type = "BUY";
+        
+    order_type = ORDER_TYPE_BUY_LIMIT;
   }
 
   if (allow_open_order)
@@ -269,7 +291,7 @@ bool isAlligatorPreparedForOpenOrder()
       " J: " + priceToStr(alligator[DEF_JAW]) +
       " T: " + priceToStr(alligator[DEF_TEETH]) +
       " L: " + priceToStr(alligator[DEF_LIPS]) +
-      str_order_type + " " + IntegerToString(allow_open_order));
+      orderTypeToStr(order_type) + " " + IntegerToString(allow_open_order));
 
     /* showStatus(ST_WaitAlligator, "wait for Alligator will open mouth for " + order_type); */
   }
