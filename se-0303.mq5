@@ -134,7 +134,7 @@ bool getCurrentHour(datetime &dt)
   datetime time_array[1];
 
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-    
+
   if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
   {
     PRINT_LOG(LOG_Error, "can not get currunt hour array " + TimeToString(time_array[0]) + " Err:" +
@@ -142,7 +142,7 @@ bool getCurrentHour(datetime &dt)
      return false;
   }
 
-  dt = time_array[0]; 
+  dt = time_array[0];
   return true;
 }
 
@@ -220,6 +220,7 @@ bool isAlligatorPreparedForOpenOrder()
   bool   allow_open_order = true;
   double dimension;
   string str_order_type;
+  ENUM_ORDER_TYPE orderType;
   double arr[DEF_ALLIGATOR_TICK];
   double alligator[DEF_ALLIGATOR_BUFFERS] = { 0 };
 
@@ -247,6 +248,7 @@ bool isAlligatorPreparedForOpenOrder()
 
         allow_open_order = false;
 
+    orderType; =ORDER_TYPE_BUY_LIMIT;   // order type
     str_order_type = "SELL";
   } else {
     if (alligator[DEF_JAW] - dimension < alligator[DEF_TEETH] ||
@@ -257,15 +259,22 @@ bool isAlligatorPreparedForOpenOrder()
     str_order_type = "BUY";
   }
 
-  showStatus(ST_WaitAlligator, "D: " + priceToStr(dimension) +
+  if (allow_open_order)
+  {
+    // Проверяем что цена возле губы аллигатора
+
+
+  } else {
+    showStatus(ST_WaitAlligator, "D: " + priceToStr(dimension) +
       " J: " + priceToStr(alligator[DEF_JAW]) +
       " T: " + priceToStr(alligator[DEF_TEETH]) +
       " L: " + priceToStr(alligator[DEF_LIPS]) +
       str_order_type + " " + IntegerToString(allow_open_order));
 
-    /*showStatus(ST_WaitAlligator, "wait for Alligator will open mouth for " + order_type);*/
+    /* showStatus(ST_WaitAlligator, "wait for Alligator will open mouth for " + order_type); */
+  }
 
-  return true;
+  return allow_open_order;
 }
 
 //+------------------------------------------------------------------+
