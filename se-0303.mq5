@@ -39,7 +39,7 @@ input double k_rebound = 0.43; // [43%_72%:3] минимальный отско�
 //+------------------------------------------------------------------+
 //| TP parameters
 //+------------------------------------------------------------------+
-input double tp_min = 0.0027; // [0.0027_0.0052:3] минимальный TP
+input double tp_min_ = 0.0015; // [0.0027_0.0052:3] минимальный TP
 
 //+------------------------------------------------------------------+
 //| Enums
@@ -435,6 +435,7 @@ ExpertStatusEnum checkAlligatorLips(ExpertStatusEnum status, double ask, double 
 ExpertStatusEnum checkRebound(ExpertStatusEnum status,
   double ask, double bid, double &tp, double &sl)
 {
+  double tp_dimension = 0.0;
   double rebound_dimension = 0.0;
 
   tp = sl = 0.0;
@@ -444,29 +445,29 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
 
   if (ES_AlligatorLips_Buy == status)
   {
-    tp = rebound_dimension - (ask - trend_low);
-    if (tp >= tp_min)
+    tp_dimension = rebound_dimension - (ask - trend_low);
+    if (tp_dimension >= tp_min_)
     {
-      tp = ask + tp;
-      sl = ask - tp;
+      tp = ask + tp_dimension;
+      sl = ask - tp_dimension;
 
       status = ES_OpenOrder_Buy;
     }
   } else if (ES_AlligatorLips_Sell == status) {
 
-    tp = rebound_dimension - (trend_high - bid);
-    if (tp >= tp_min)
+    tp_dimension = rebound_dimension - (trend_high - bid);
+    if (tp_dimension >= tp_min_)
     {
-      tp = bid - tp;
-      sl = bid + tp;
+      tp = bid - tp_dimension;
+      sl = bid + tp_dimension;
 
       status = ES_OpenOrder_Sell;
     }
   }
 
   SET_DEBUG_STATUS("D: " + priceToStr(rebound_dimension) +
-    " TP: " + priceToStr(tp) +
-    " SL: " + priceToStr(sl));
+    " TP: " + priceToStr(tp_dimension) +
+    " SL: " + priceToStr(tp_dimension));
 
   return status;
 }
