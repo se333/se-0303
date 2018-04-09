@@ -39,10 +39,8 @@ enum ExpertStatusEnum
   ES_Trend_Min,
   ES_Trend_Max,
   ES_Trend_Ok,
-  ES_AlligatorMouth_Wait,
   ES_AlligatorMouth_Buy,
   ES_AlligatorMouth_Sell,
-  ES_AlligatorLips_Wait,
   ES_AlligatorLips_Buy,
   ES_AlligatorLips_Sell,
   ES_OpenOrder
@@ -133,23 +131,21 @@ void setExpertStatus(ExpertStatusEnum status)
 {
   // Сохраняем состояние советника
   expert_status = status;
-  
+
 #ifdef DEF_SHOW_EXPERT_STATUS
 
   string text;
-  
+
 #ifdef DEF_SHOW_DEBUG_STATUS
   text = text_debug_status;
-#else  
+#else
   switch (expert_status) {
     case ES_Error:               text = "ERROR"; break;
     case ES_Trend_Min:           text = "Trend is smaller than min value"; break;
     case ES_Trend_Max:           text = "Trend is bigger than max value"; break;
     case ES_Trend_Ok:            text = "Trend is Ok"; break;
-    case ES_AlligatorMouth_Wait: text = "Waiting for mouth"; break;
     case ES_AlligatorMouth_Buy:  text = "Mouth opened for BUY"; break;
     case ES_AlligatorMouth_Sell: text = "Mouth opened for SELL"; break;
-    case ES_AlligatorLips_Wait:  text = "Waiting for lips"; break;
     case ES_AlligatorLips_Buy:   text = "Price is near lips BUY"; break;
     case ES_AlligatorLips_Sell:  text = "Price is near lips SELL"; break;
     default:                     text = "Status undefined";
@@ -182,7 +178,7 @@ void setDebugStatus(string text)
 void printLog(LogLevelEnum level_log, string text)
 {
   PrintFormat("%s: %s:%d %s", log_level_names[level_log], __FUNCTION__, __LINE__, text);
-  
+
 #ifdef DEF_SHOW_EXPERT_STATUS
   showExpertStatus(ES_Error, text);
 #endif
@@ -202,9 +198,9 @@ string priceToStr(double value)
 string orderTypeToStr(ENUM_ORDER_TYPE order_type)
 {
   string str;
-  
+
   switch (order_type)
-  {  
+  {
     case ORDER_TYPE_BUY:             { str = "BUY"; } break;
     case ORDER_TYPE_SELL:            { str = "SELL"; } break;
     case ORDER_TYPE_BUY_LIMIT:       { str = "BUY_LIMIT"; } break;
@@ -214,7 +210,7 @@ string orderTypeToStr(ENUM_ORDER_TYPE order_type)
     case ORDER_TYPE_BUY_STOP_LIMIT:  { str = "BUY_STOP_LIMIT"; } break;
     case ORDER_TYPE_SELL_STOP_LIMIT: { str = "SELL_STOP_LIMIT"; } break;
     case ORDER_TYPE_CLOSE_BY:        { str = "CLOSE_BY"; } break;
-    default:                         { str = "INVALID ORDER TYPE"; } 
+    default:                         { str = "INVALID ORDER TYPE"; }
   }
   return str;
 }
@@ -276,7 +272,7 @@ bool calcTrendDimension(double &td, double &th, double &tl)
 
   return false;
 }
-  
+
 //+------------------------------------------------------------------+
 //| Проверяет размер тренда на нахождение в разрешенном диапазоне
 //+------------------------------------------------------------------+
@@ -310,7 +306,7 @@ ExpertStatusEnum checkAlligatorOpenMouth(double &lips)
   double dimension;
   double arr[DEF_ALLIGATOR_TICK];
   double alligator[DEF_ALLIGATOR_BUFFERS] = { 0 };
-  ExpertStatusEnum status = ES_AlligatorMouth_Wait;
+  ExpertStatusEnum status = ES_Trend_Ok;
 
   /* Подготавливаем текущие значения цен */
   for (i = 0; i < DEF_ALLIGATOR_BUFFERS; i++)
@@ -332,13 +328,13 @@ ExpertStatusEnum checkAlligatorOpenMouth(double &lips)
   /* Проверяем что расстояние между челюстью, зубами и губами аллигатора достаточное - пасть открыта */
   if (alligator[DEF_JAW] < alligator[DEF_LIPS])
   {
-    if (alligator[DEF_JAW] + dimension > alligator[DEF_TEETH] ||
-        alligator[DEF_TEETH] + dimension > alligator[DEF_LIPS])
-          
+    if (alligator[DEF_JAW] + dimension < alligator[DEF_TEETH] &&
+        alligator[DEF_TEETH] + dimension < alligator[DEF_LIPS])
+
           status = ES_AlligatorMouth_Sell;
   } else {
-    if (alligator[DEF_JAW] - dimension < alligator[DEF_TEETH] ||
-        alligator[DEF_TEETH] - dimension < alligator[DEF_LIPS])
+    if (alligator[DEF_JAW] - dimension > alligator[DEF_TEETH] &&
+        alligator[DEF_TEETH] - dimension > alligator[DEF_LIPS])
 
         status = ES_AlligatorMouth_Buy;
   }
@@ -347,7 +343,7 @@ ExpertStatusEnum checkAlligatorOpenMouth(double &lips)
     " J: " + priceToStr(alligator[DEF_JAW]) +
     " T: " + priceToStr(alligator[DEF_TEETH]) +
     " L: " + priceToStr(alligator[DEF_LIPS]));
-      
+
   return status;
 }
 
@@ -359,23 +355,25 @@ ExpertStatusEnum checkAlligatorLips(ExpertStatusEnum status, double lips)
    double ask, bid;
    MqlTick last_tick = {0};
    SymbolInfoTick(DEF_SYMBOL, last_tick);
-   
+
    ask = last_tick.ask;
    bid = last_tick.bid;
-  
-  if (ES_AlligatorMouth_Buy == status)
+
+  if (ES_AlligatorMouth_Buy == status ||
+      ES_AlligatorLips_Buy == status)
   {
     if (ask > lips && ask < lips + DEF_OPEN_DJITTER)
       status = ES_AlligatorLips_Buy;
     else
-      status = ES_AlligatorLips_Wait;
-  } else if (ES_AlligatorMouth_Sell == status) {
+      status = ES_AlligatorMouth_Buy;
+  } else if (ES_AlligatorMouth_Sell == status ||
+             ES_AlligatorLips_Sell == status) {
     if (bid < lips && bid > lips - DEF_OPEN_DJITTER)
       status = ES_AlligatorLips_Sell;
     else
-      status = ES_AlligatorLips_Wait;                
+      status = ES_AlligatorMouth_Sell;
   }
-    
+
   return status;
 }
 
@@ -433,10 +431,10 @@ void OnTick()
       priceToStr(trend_min_dimension) + "/" +
       priceToStr(trend_max_dimension) + "  " +
       priceToStr(trend_dimension));
-    
+
     // 2. Проверяем что размер тренда в установленном диапазоне
     setExpertStatus(checkValidTrendDimension());
-    
+
     // 3. Проверяем что Аллигатор с открытым ртом
     if (ES_Trend_Ok == expert_status)
       setExpertStatus(checkAlligatorOpenMouth(price_lips));
@@ -444,7 +442,10 @@ void OnTick()
 
   // 4. Проверяем что текущая цена возле губы Аллигатора
   if (ES_AlligatorMouth_Buy == expert_status ||
-      ES_AlligatorMouth_Sell == expert_status)
+      ES_AlligatorMouth_Sell == expert_status ||
+      ES_AlligatorLips_Buy == expert_status ||
+      ES_AlligatorLips_Sell == expert_status)
+
       setExpertStatus(checkAlligatorLips(expert_status, price_lips));
 }
 
