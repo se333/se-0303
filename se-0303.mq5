@@ -39,7 +39,7 @@ input double k_rebound = 0.43; // [43%_72%:3] минимальный отско�
 //+------------------------------------------------------------------+
 //| TP parameters
 //+------------------------------------------------------------------+
-input double tp_min_ = 0.0015; // [0.0027_0.0052:3] минимальный TP
+input double tp_min = 0.0015; // [0.0027_0.0052:3] минимальный TP
 
 //+------------------------------------------------------------------+
 //| Enums
@@ -244,22 +244,24 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
    MqlTradeResult  result={0};
 
    //--- parameters of request
-   request.action    = TRADE_ACTION_DEAL;                     // type of trade operation
-   request.symbol    = DEF_SYMBOL;                              // symbol
-   request.volume    = volume;                                   // volume of 0.1 lot
-   request.type      = order_type;                        // order type
-   request.price     = price; // price for opening
-   request.deviation = 5;                                     // allowed deviation from the price
-   request.magic     = DEF_EXPERT_MAGIC;                          // MagicNumber of the order
+   request.action    = TRADE_ACTION_DEAL; // type of trade operation
+   request.symbol    = DEF_SYMBOL;        // symbol
+   request.volume    = volume;            // volume of 0.1 lot
+   request.type      = order_type;        // order type
+   request.price     = price;             // price for opening
+   request.tp        = tp;
+   request.sl        = sl;
+   request.deviation = 5;                 // allowed deviation from the price
+   request.magic     = DEF_EXPERT_MAGIC;  // MagicNumber of the order
 
   //--- send the request
   if(!(ret = OrderSend(request, result)))
       PrintFormat("OrderSend error %d", GetLastError());     // if unable to send the request, output the error code
 
    //--- information about the operation
-   PrintFormat("OrderSend: retcode=%u  deal=%I64u  order=%I64u",result.retcode,result.deal,result.order);
+   PrintFormat("OrderSend: retcode=%u  deal=%I64u  order=%I64u", result.retcode, result.deal, result.order);
 
-   return ret;
+   return ret && TRADE_RETCODE_DONE == result.retcode; // request completed
 }
 
 //+------------------------------------------------------------------+
@@ -446,7 +448,7 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
   if (ES_AlligatorLips_Buy == status)
   {
     tp_dimension = rebound_dimension - (ask - trend_low);
-    if (tp_dimension >= tp_min_)
+    if (tp_dimension >= tp_min)
     {
       tp = ask + tp_dimension;
       sl = ask - tp_dimension;
@@ -456,7 +458,7 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
   } else if (ES_AlligatorLips_Sell == status) {
 
     tp_dimension = rebound_dimension - (trend_high - bid);
-    if (tp_dimension >= tp_min_)
+    if (tp_dimension >= tp_min)
     {
       tp = bid - tp_dimension;
       sl = bid + tp_dimension;
@@ -510,16 +512,22 @@ void OnTick()
 {
   double ask, bid, tp = 0.0, sl = 0.0;
   datetime cur_time;
+  ulong order_ticket;
+  int i, total;
 
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-
-  // 1. Проверяем новый час или начало торговли
+  
+  // 1. Проверяем наличие позиции
+  if (PositionSelect(DEF_SYMBOL))
+    return;
+  
+  // 2. Проверяем новый час или начало торговли
   if (getCurrentHour(cur_time) && cur_time != saved_time) // если новый час
   {
     expert_status = ES_Scan; // сбрасываем состояние эксперта
     saved_time = cur_time; // запоминаем время нового бара
 
-    // 1. Вычисляем новый размер тренда
+    // 3. Вычисляем новый размер тренда
     calcTrendDimension(trend_dimension, trend_high, trend_low);
 
 #ifdef DEF_SHOW_EXPERT_STATUS
@@ -530,18 +538,18 @@ void OnTick()
       priceToStr(trend_dimension));
 #endif
 
-    // 2. Проверяем что размер тренда в установленном диапазоне
+    // 4. Проверяем что размер тренда в установленном диапазоне
     setExpertStatus(checkValidTrendDimension());
 
-    // 3. Проверяем что Аллигатор с открытым ртом
+    // 5. Проверяем что Аллигатор с открытым ртом
     if (ES_Trend_Ok == expert_status)
       setExpertStatus(checkAlligatorOpenMouth(price_lips));
   }
 
-  // 4. Получаем текущую цену
+  // 6. Получаем текущую цену
   getCurrentPrice(ask, bid);
 
-  // 5. Проверяем что текущая цена возле губы Аллигатора
+  // 7. Проверяем что текущая цена возле губы Аллигатора
   if (ES_AlligatorMouth_Buy == expert_status ||
       ES_AlligatorMouth_Sell == expert_status ||
       ES_AlligatorLips_Buy == expert_status ||
@@ -556,7 +564,7 @@ void OnTick()
     setExpertStatus(checkRebound(expert_status, ask, bid, tp, sl));
   }
 
-  // 7. Открываем ордер
+  // 8. Открываем ордер
   if (ES_OpenOrder_Buy == expert_status ||
       ES_OpenOrder_Sell == expert_status)
   {
