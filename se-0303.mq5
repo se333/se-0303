@@ -14,13 +14,13 @@
 #define DEF_OPEN_DJITTER           0.0003
 #define DEF_EXPERT_MAGIC           0303 // MagicNumber of the expert
 
-#define DEF_SHOW_EXPERT_STATUS
-#define DEF_SHOW_DEBUG_STATUS
+/* #define DEF_SHOW_EXPERT_STATUS
+#define DEF_SHOW_DEBUG_STATUS */
 
 //+------------------------------------------------------------------+
 //| Trend parameters
 //+------------------------------------------------------------------+
-input int    trend_hours_ago     = 24;     // [24_48:2] продолжительность времени в часах начиная с текущего часа, которая анализируется для вычисления тренда
+input int    trend_hours_ago     = 48;     // [24_48:2] продолжительность времени в часах начиная с текущего часа, которая анализируется для вычисления тренда
 input double trend_min_dimension = 0.0070; // минимальный размер тренда
 input double trend_max_dimension = 0.0280; // максимальный размер тренда
 
@@ -29,17 +29,17 @@ double trend_dimension, trend_high, trend_low; // размер, а также м
 //+------------------------------------------------------------------+
 //| Alligator parameters
 //+------------------------------------------------------------------+
-input double k_alligator_open_mouth = 0.10; // [10%_20%:2] аллигатор с раскрытой пастью, т.е. между зубами, губами и челюстью не менее 10% от тренда
+input double k_alligator_open_mouth = 0.15; // [10%_20%:2] аллигатор с раскрытой пастью, т.е. между зубами, губами и челюстью не менее 10% от тренда
 
 //+------------------------------------------------------------------+
 //| Rebound parameters
 //+------------------------------------------------------------------+
-input double k_rebound = 0.43; // [43%_72%:3] минимальный отскок цены относительно тренда
+input double k_rebound = 0.55; // [43%_72%:3] минимальный отскок цены относительно тренда
 
 //+------------------------------------------------------------------+
 //| TP parameters
 //+------------------------------------------------------------------+
-input double tp_min = 0.0015; // [0.0027_0.0052:3] минимальный TP
+input double tp_min = 0.0027; // [0.0027_0.0052:3] минимальный TP
 
 //+------------------------------------------------------------------+
 //| Enums
@@ -257,9 +257,11 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
   //--- send the request
   if(!(ret = OrderSend(request, result)))
       PrintFormat("OrderSend error %d", GetLastError());     // if unable to send the request, output the error code
-
+      
+#ifdef DEF_SHOW_DEBUG_STATUS
    //--- information about the operation
    PrintFormat("OrderSend: retcode=%u  deal=%I64u  order=%I64u", result.retcode, result.deal, result.order);
+#endif
 
    return ret && TRADE_RETCODE_DONE == result.retcode; // request completed
 }
@@ -270,8 +272,6 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
 bool getCurrentHour(datetime &dt)
 {
   datetime time_array[1];
-
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
 
   if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
   {
@@ -304,8 +304,6 @@ bool calcTrendDimension(double &td, double &th, double &tl)
   int hour;
   double high_array[DEF_TREND_MAX_HOURS_AGO];
   double low_array[DEF_TREND_MAX_HOURS_AGO];
-
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
 
   if (trend_hours_ago <= DEF_TREND_MAX_HOURS_AGO &&
       trend_hours_ago == CopyHigh(DEF_SYMBOL, DEF_TIMEFRAME, 0, trend_hours_ago, high_array) &&
@@ -346,9 +344,6 @@ ExpertStatusEnum checkValidTrendDimension()
 
   return ES_Trend_Ok;
 }
-
-/* ENUM_ORDER_TYPE order_type;
-order_type = ORDER_TYPE_SELL_LIMIT;*/
 
 //+-----------------------------------------------------------------+
 //| Проверяет что Аллигатор с открытым ртом
@@ -479,10 +474,11 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
 //+------------------------------------------------------------------+
 int OnInit()
 {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
 
+#ifdef DEF_SHOW_DEBUG_STATUS
   CreateLabel(DEF_CHART_ID, label_status, "STATUS:", 0, 5, 20, clrYellow);
   CreateLabel(DEF_CHART_ID, label_trend, "TREND:", 0, 5, 40, clrYellow);
+#endif
 
   handle_alligator = iAlligator(DEF_SYMBOL, DEF_TIMEFRAME, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN);
 
@@ -498,7 +494,6 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
 //--- destroy timer
    EventKillTimer();
 
@@ -512,10 +507,10 @@ void OnTick()
 {
   double ask, bid, tp = 0.0, sl = 0.0;
   datetime cur_time;
-  ulong order_ticket;
-  int i, total;
-
+  
+#ifdef DEF_SHOW_DEBUG_STATUS
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
+#endif
   
   // 1. Проверяем наличие позиции
   if (PositionSelect(DEF_SYMBOL))
@@ -579,71 +574,55 @@ void OnTick()
 //| Timer function                                                   |
 //+------------------------------------------------------------------+
 void OnTimer()
-  {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-//---
+{
+}
 
-  }
 //+------------------------------------------------------------------+
 //| Trade function                                                   |
 //+------------------------------------------------------------------+
 void OnTrade()
-  {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-//---
+{
+}
 
-  }
 //+------------------------------------------------------------------+
 //| TradeTransaction function                                        |
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
                         const MqlTradeResult& result)
-  {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-//---
+{
+}
 
-  }
 //+------------------------------------------------------------------+
 //| Tester function                                                  |
 //+------------------------------------------------------------------+
 double OnTester()
-  {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-//---
-   double ret=0.0;
-//---
+{
+  double ret=0.0;
+  return(ret);
+}
 
-//---
-   return(ret);
-  }
 //+------------------------------------------------------------------+
 //| TesterInit function                                              |
 //+------------------------------------------------------------------+
 void OnTesterInit()
-  {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-//---
+{
+}
 
-  }
 //+------------------------------------------------------------------+
 //| TesterPass function                                              |
 //+------------------------------------------------------------------+
 void OnTesterPass()
-  {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-//---
+{
+}
 
-  }
 //+------------------------------------------------------------------+
 //| TesterDeinit function                                            |
 //+------------------------------------------------------------------+
 void OnTesterDeinit()
-  {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-//---
+{
+}
 
-  }
 //+------------------------------------------------------------------+
 //| ChartEvent function                                              |
 //+------------------------------------------------------------------+
@@ -651,10 +630,6 @@ void OnChartEvent(const int id,
                   const long &lparam,
                   const double &dparam,
                   const string &sparam)
-  {
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-//---
-
-  }
+{
+}
 //+------------------------------------------------------------------+
-
