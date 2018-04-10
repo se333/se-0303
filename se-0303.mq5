@@ -17,11 +17,13 @@
 /* #define DEF_SHOW_EXPERT_STATUS
 #define DEF_SHOW_DEBUG_STATUS */
 
+#define DEF_DEBUG_FIXED_TP          // эта отладка для открытия позиций с одинаковыми TP 10.0
+
 //+------------------------------------------------------------------+
 //| Trend parameters
 //+------------------------------------------------------------------+
-input int    trend_hours_ago     = 48;     // [24_48:2] продолжительность времени в часах начиная с текущего часа, которая анализируется для вычисления тренда
-input double trend_min_dimension = 0.0070; // минимальный размер тренда
+input int    trend_hours_ago     = 28;     // [24_48:2] продолжительность времени в часах начиная с текущего часа, которая анализируется для вычисления тренда
+input double trend_min_dimension = 0.0090; // минимальный размер тренда
 input double trend_max_dimension = 0.0280; // максимальный размер тренда
 
 double trend_dimension, trend_high, trend_low; // размер, а также максимальное и минимальное значение цены за время тренда
@@ -34,12 +36,12 @@ input double k_alligator_open_mouth = 0.15; // [10%_20%:2] аллигатор с
 //+------------------------------------------------------------------+
 //| Rebound parameters
 //+------------------------------------------------------------------+
-input double k_rebound = 0.55; // [43%_72%:3] минимальный отскок цены относительно тренда
+input double k_rebound = 0.65; // [43%_72%:3] минимальный отскок цены относительно тренда
 
 //+------------------------------------------------------------------+
 //| TP parameters
 //+------------------------------------------------------------------+
-input double tp_min = 0.0027; // [0.0027_0.0052:3] минимальный TP
+input double tp_min = 0.0036; // [0.0027_0.0052:3] минимальный TP
 
 //+------------------------------------------------------------------+
 //| Enums
@@ -209,6 +211,22 @@ string priceToStr(double value)
 }
 
 //+-----------------------------------------------------------------+
+//| Преобразовывает деньги в лоты
+//+-----------------------------------------------------------------+
+double moneyToLots(double money)
+{
+  return NormalizeDouble(money / 100000.0, 2);
+}
+
+//+-----------------------------------------------------------------+
+//| Преобразовывает лоты в деньги
+//+-----------------------------------------------------------------+
+double lotsToMoney(double lots)
+{
+  return NormalizeDouble(lots * 100000.0, 2);
+}
+
+//+-----------------------------------------------------------------+
 //| Преобразовывает тип ордера в строку
 //+-----------------------------------------------------------------+
 string orderTypeToStr(ENUM_ORDER_TYPE order_type)
@@ -245,8 +263,7 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
 
    //--- parameters of request
    request.action    = TRADE_ACTION_DEAL; // type of trade operation
-   request.symbol    = DEF_SYMBOL;        // symbol
-   request.volume    = volume;            // volume of 0.1 lot
+   request.symbol    = DEF_SYMBOL;        // symbol   
    request.type      = order_type;        // order type
    request.price     = price;             // price for opening
    request.tp        = tp;
@@ -254,6 +271,16 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
    request.deviation = 5;                 // allowed deviation from the price
    request.magic     = DEF_EXPERT_MAGIC;  // MagicNumber of the order
 
+#ifdef DEF_DEBUG_FIXED_TP
+   double profit = 100.0;
+   if (order_type == ORDER_TYPE_BUY)
+     request.volume    = moneyToLots(profit / (tp - price));
+   else
+     request.volume    = moneyToLots(profit / (price - tp));
+#else
+   request.volume    = volume;            // volume of 0.1 lot
+#endif
+   
   //--- send the request
   if(!(ret = OrderSend(request, result)))
       PrintFormat("OrderSend error %d", GetLastError());     // if unable to send the request, output the error code
