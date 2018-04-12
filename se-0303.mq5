@@ -22,26 +22,36 @@
 //+------------------------------------------------------------------+
 //| Trend parameters
 //+------------------------------------------------------------------+
-input int    trend_hours_ago     = 30;     // [24_48:2] продолжительность времени в часах начиная с текущего часа, которая анализируется для вычисления тренда
+input int    trend_hours_ago     = 33;     // [24-48] продолжительность времени в часах начиная с текущего часа, которая анализируется для вычисления тренда
 input double trend_min_dimension = 0.0085; // минимальный размер тренда
-input double trend_max_dimension = 0.0260; // максимальный размер тренда
+input double trend_max_dimension = 0.0180; // максимальный размер тренда
 
 double trend_dimension, trend_high, trend_low; // размер, а также максимальное и минимальное значение цены за время тренда
 
 //+------------------------------------------------------------------+
 //| Alligator parameters
 //+------------------------------------------------------------------+
-input double k_alligator_open_mouth = 0.16; // [10%_20%:2] аллигатор с раскрытой пастью, т.е. между зубами, губами и челюстью не менее 10% от тренда
+input double k_alligator_open_mouth = 0.16; // [10%-20%] аллигатор с раскрытой пастью, т.е. между зубами, губами и челюстью не менее 10% от тренда
 
 //+------------------------------------------------------------------+
 //| Rebound parameters
 //+------------------------------------------------------------------+
-input double k_rebound = 0.6; // [43%_72%:3] минимальный отскок цены относительно тренда
+input double k_rebound = 0.60; // [43%-72%] минимальный ожидаемый отскок цены относительно тренда
 
 //+------------------------------------------------------------------+
 //| TP parameters
 //+------------------------------------------------------------------+
-input double tp_min = 0.0030; // [0.0027_0.0052:3] минимальный TP
+input double tp_min = 0.0030; // [0.0027-0.0037] минимальный TP
+
+//+------------------------------------------------------------------+
+//| Lossing parameters, это параметр показывает через сколько часов после 
+//|   закрытия ордера в убыток(поражения) можно открывать следующий, 
+//|   задается уравнением прямой kx + b = y, где x - порядковый номер поражения
+//+------------------------------------------------------------------+
+input int   loss_skip_hours_k   = 4; // коэф. k - уравнения прямой
+input int   loss_skip_hours_b   = 8; // коэф. b - уравнения прямой
+
+int loss_skip_hours = 0; // кол-во часов которое нужно подождать до следующего выхода на рынок после поражения
 
 //+------------------------------------------------------------------+
 //| Enums
@@ -249,6 +259,35 @@ string orderTypeToStr(ENUM_ORDER_TYPE order_type)
   return str;
 }
 
+//+------------------------------------------------------------------+
+//| Возвращает текущий час
+//+------------------------------------------------------------------+
+bool getCurrentHour(datetime &dt)
+{
+  datetime time_array[1];
+
+  if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
+  {
+    PRINT_LOG(LOG_Error, "can not get currunt hour array " + TimeToString(time_array[0]) + " Err:" +
+      IntegerToString(GetLastError()));
+     return false;
+  }
+
+  dt = time_array[0];
+  return true;
+}
+
+//+-----------------------------------------------------------------+
+//| Возвращает текущую цену
+//+-----------------------------------------------------------------+
+void getCurrentPrice(double &ask, double &bid)
+{
+   MqlTick last_tick = {0};
+   SymbolInfoTick(DEF_SYMBOL, last_tick);
+
+   ask = last_tick.ask;
+   bid = last_tick.bid;
+}
 
 //+------------------------------------------------------------------+
 //| Открывает ордер
@@ -294,36 +333,6 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
 }
 
 //+------------------------------------------------------------------+
-//| Возвращает текущий час
-//+------------------------------------------------------------------+
-bool getCurrentHour(datetime &dt)
-{
-  datetime time_array[1];
-
-  if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
-  {
-    PRINT_LOG(LOG_Error, "can not get currunt hour array " + TimeToString(time_array[0]) + " Err:" +
-      IntegerToString(GetLastError()));
-     return false;
-  }
-
-  dt = time_array[0];
-  return true;
-}
-
-//+-----------------------------------------------------------------+
-//| Возвращает текущую цену
-//+-----------------------------------------------------------------+
-void getCurrentPrice(double &ask, double &bid)
-{
-   MqlTick last_tick = {0};
-   SymbolInfoTick(DEF_SYMBOL, last_tick);
-
-   ask = last_tick.ask;
-   bid = last_tick.bid;
-}
-
-//+------------------------------------------------------------------+
 //| Рассчитыват размер тренда
 //+------------------------------------------------------------------+
 bool calcTrendDimension(double &td, double &th, double &tl)
@@ -353,8 +362,10 @@ bool calcTrendDimension(double &td, double &th, double &tl)
 
     return true;
 
-  } else
+  } else {
+    td = th = tl = 0;
     PRINT_LOG(LOG_Error, "can not recieve Low and High array");
+  }
 
   return false;
 }
@@ -497,6 +508,15 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
 }
 
 //+------------------------------------------------------------------+
+//| Вычисляет время в часах, которое необходимо подождать до следующего
+//|   выхода на рынок после поражения
+//+------------------------------------------------------------------+
+int calcLossSkipHours(int loss_number_x)
+{
+  return loss_skip_hours_k * loss_number_x + loss_skip_hours_b;
+}
+
+//+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
@@ -549,29 +569,42 @@ void OnTick()
     expert_status = ES_Scan; // сбрасываем состояние эксперта
     saved_time = cur_time; // запоминаем время нового бара
 
-    // 3. Вычисляем новый размер тренда
+
+    // 3. Проверяем что уже можно выходить на рынок после поражения
+    if (loss_skip_hours)
+    {
+      loss_skip_hours--; // уменьшаем время ожидания
+
+#ifdef DEF_SHOW_EXPERT_STATUS
+      setLabelText(DEF_CHART_ID, label_trend, "SKIP HOURS [" +
+        IntegerToString(loss_skip_hours) + "]");
+#endif
+      return;
+    }
+
+    // 4. Вычисляем новый размер тренда
     calcTrendDimension(trend_dimension, trend_high, trend_low);
 
 #ifdef DEF_SHOW_EXPERT_STATUS
     setLabelText(DEF_CHART_ID, label_trend, "TREND[" +
       IntegerToString(trend_hours_ago) + "]: " +
       priceToStr(trend_min_dimension) + "/" +
-      priceToStr(trend_max_dimension) + "  " +
+      priceToStr(trend_max_dimension) + " - " +
       priceToStr(trend_dimension));
 #endif
 
-    // 4. Проверяем что размер тренда в установленном диапазоне
+    // 5. Проверяем что размер тренда в установленном диапазоне
     setExpertStatus(checkValidTrendDimension());
 
-    // 5. Проверяем что Аллигатор с открытым ртом
+    // 6. Проверяем что Аллигатор с открытым ртом
     if (ES_Trend_Ok == expert_status)
       setExpertStatus(checkAlligatorOpenMouth(price_lips));
   }
 
-  // 6. Получаем текущую цену
+  // 7. Получаем текущую цену
   getCurrentPrice(ask, bid);
 
-  // 7. Проверяем что текущая цена возле губы Аллигатора
+  // 8. Проверяем что текущая цена возле губы Аллигатора
   if (ES_AlligatorMouth_Buy == expert_status ||
       ES_AlligatorMouth_Sell == expert_status ||
       ES_AlligatorLips_Buy == expert_status ||
@@ -579,14 +612,14 @@ void OnTick()
 
       setExpertStatus(checkAlligatorLips(expert_status, ask, bid, price_lips));
 
-  // 6. Проверяем что отскок еще не завершен и можно установить TP
+  // 9. Проверяем что отскок еще не завершен и можно установить TP
   if (ES_AlligatorLips_Buy == expert_status ||
       ES_AlligatorLips_Sell == expert_status)
   {
     setExpertStatus(checkRebound(expert_status, ask, bid, tp, sl));
   }
 
-  // 8. Открываем ордер
+  // 10. Открываем ордер
   if (ES_OpenOrder_Buy == expert_status ||
       ES_OpenOrder_Sell == expert_status)
   {
