@@ -51,8 +51,6 @@ input double tp_min = 0.0030; // [0.0027-0.0037] минимальный TP
 input int   loss_skip_hours_k   = 4; // коэф. k - уравнения прямой
 input int   loss_skip_hours_b   = 8; // коэф. b - уравнения прямой
 
-int loss_skip_hours = 0; // кол-во часов которое нужно подождать до следующего выхода на рынок после поражения
-
 //+------------------------------------------------------------------+
 //| Enums
 //+------------------------------------------------------------------+
@@ -289,6 +287,42 @@ void getCurrentPrice(double &ask, double &bid)
    bid = last_tick.bid;
 }
 
+//+-----------------------------------------------------------------+
+//| Возвращает кол-во последовательных сделок, которые завершились поражением
+//+-----------------------------------------------------------------+
+uint getCountConsecutiveLossDeal(datetime &time_last_loss)
+{
+  uint i, cnt = 0;
+  ulong ticket;
+  uint total = HistoryDealsTotal();
+  
+  if (total)
+  {
+    for (i = total - 1; i >= 0; i--)
+    {
+      if ((ticket = HistoryDealGetTicket(i) ) > 0)
+      {
+        if (HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT && /* выход из рынка */
+            HistoryDealGetString(ticket, DEAL_SYMBOL) == DEF_SYMBOL &&
+            HistoryDealGetInteger(ticket, DEAL_MAGIC) == DEF_EXPERT_MAGIC)
+        {
+          if (HistoryDealGetDouble(ticket, DEAL_PROFIT) < 0.0)
+          {
+            if (0 == cnt) // запоминаем время последней убыточной сделки
+              time_last_loss =(datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
+              
+            cnt++; // увеличиваем кол-во убыточных сделок
+          }
+          else
+            break; // закончились убыточные сделки
+        }
+      }
+    }
+  }
+  
+  return cnt;
+}
+
 //+------------------------------------------------------------------+
 //| Открывает ордер
 //+------------------------------------------------------------------+
@@ -511,9 +545,9 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
 //| Вычисляет время в часах, которое необходимо подождать до следующего
 //|   выхода на рынок после поражения
 //+------------------------------------------------------------------+
-int calcLossSkipHours(int loss_number_x)
+int calcLossSkipHours(int cnt_last_loss)
 {
-  return loss_skip_hours_k * loss_number_x + loss_skip_hours_b;
+  return loss_skip_hours_k * cnt_last_loss + loss_skip_hours_b;
 }
 
 //+------------------------------------------------------------------+
@@ -566,20 +600,30 @@ void OnTick()
   // 2. Проверяем новый час или начало торговли
   if (getCurrentHour(cur_time) && cur_time != saved_time) // если новый час
   {
+    uint cnt_last_loss;
+    datetime time_last_loss;
+    int loss_skip_hours; // кол-во часов которое нужно подождать до следующего выхода на рынок после поражения
+    
     expert_status = ES_Scan; // сбрасываем состояние эксперта
     saved_time = cur_time; // запоминаем время нового бара
 
-
-    // 3. Проверяем что уже можно выходить на рынок после поражения
-    if (loss_skip_hours)
+    // 3. Проверяем что уже можно выходить на рынок если прошлый раз было поражения
+    cnt_last_loss = getCountConsecutiveLossDeal(time_last_loss);
+    if (cnt_last_loss)
     {
-      loss_skip_hours--; // уменьшаем время ожидания
-
+      loss_skip_hours = calcLossSkipHours(cnt_last_loss);
+      
+      if (cur_time < time_last_loss + loss_skip_hours * 60 *60)
+      {
 #ifdef DEF_SHOW_EXPERT_STATUS
-      setLabelText(DEF_CHART_ID, label_trend, "SKIP HOURS [" +
-        IntegerToString(loss_skip_hours) + "]");
+        setLabelText(DEF_CHART_ID, label_trend, "Wait " +
+          TimeToString(time_last_loss + loss_skip_hours * 60 *60 - cur_time, TIME_DATE) +   
+          " after " +
+          IntegerToString(cnt_last_loss) + " LOSS " +
+          IntegerToString(loss_skip_hours) + "]");
 #endif
-      return;
+        return;
+      }
     }
 
     // 4. Вычисляем новый размер тренда
@@ -693,3 +737,14 @@ void OnChartEvent(const int id,
 {
 }
 //+------------------------------------------------------------------+
+
+/*
+//+------------------------------------------------------------------+
+ORDER_POSITION_ID
+Идентификатор позиции, который ставится на ордере при его исполнении. Каждый исполненный ордер порождает сделку, которая открывает новую или изменяет уже существующую позицию. Идентификатор этой позиции и устанавливается исполненному ордеру в этот момент.
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+//+------------------------------------------------------------------+
+*/
