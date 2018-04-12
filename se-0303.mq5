@@ -292,15 +292,19 @@ void getCurrentPrice(double &ask, double &bid)
 //+-----------------------------------------------------------------+
 uint getCountConsecutiveLossDeal(datetime &time_last_loss)
 {
-  uint i, cnt = 0;
+  bool res;
   ulong ticket;
-  uint total = HistoryDealsTotal();
+  uint i, total, cnt = 0;
+  datetime cur_datetime = TimeCurrent();
   
-  if (total)
+  res = HistorySelect(cur_datetime - 30*24*60*60, cur_datetime); // TODO: перенести в другое место
+  total = HistoryDealsTotal();
+  
+  if (res && total)
   {
-    for (i = total - 1; i >= 0; i--)
+    for (i = total; i > 0;)
     {
-      if ((ticket = HistoryDealGetTicket(i) ) > 0)
+      if ((ticket = HistoryDealGetTicket(--i) ) > 0)
       {
         if (HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT && /* выход из рынка */
             HistoryDealGetString(ticket, DEAL_SYMBOL) == DEF_SYMBOL &&
@@ -616,10 +620,10 @@ void OnTick()
       if (cur_time < time_last_loss + loss_skip_hours * 60 *60)
       {
 #ifdef DEF_SHOW_EXPERT_STATUS
-        setLabelText(DEF_CHART_ID, label_trend, "Wait " +
-          TimeToString(time_last_loss + loss_skip_hours * 60 *60 - cur_time, TIME_DATE) +   
+        setLabelText(DEF_CHART_ID, label_trend, "Wait " +          
+          TimeToString(time_last_loss, TIME_DATE) +   
           " after " +
-          IntegerToString(cnt_last_loss) + " LOSS " +
+          IntegerToString(cnt_last_loss) + " LOSS [" +
           IntegerToString(loss_skip_hours) + "]");
 #endif
         return;
@@ -695,6 +699,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
                         const MqlTradeResult& result)
 {
+
 }
 
 //+------------------------------------------------------------------+
