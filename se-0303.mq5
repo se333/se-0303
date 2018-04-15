@@ -17,7 +17,7 @@
 /**/#define DEF_SHOW_EXPERT_STATUS
 #define DEF_SHOW_DEBUG_STATUS/**/
 
-#define DEF_DEBUG_FIXED_TP          // эта отладка для открытия позиций с одинаковыми TP 10.0
+/* #define DEF_DEBUG_FIXED_TP */         // эта отладка для открытия позиций с одинаковыми TP 10.0
 
 //+------------------------------------------------------------------+
 //| Trend parameters
@@ -41,7 +41,7 @@ input double k_rebound = 0.60; // [43%-72%] минимальный ожидае�
 //+------------------------------------------------------------------+
 //| TP parameters
 //+------------------------------------------------------------------+
-input double tp_min = 0.0030; // [0.0027-0.0037] минимальный TP
+input double tp_min = 0.0020; // [0.0027-0.0037] минимальный TP
 
 //+------------------------------------------------------------------+
 //| Lossing parameters, это параметр показывает через сколько часов после
@@ -50,6 +50,10 @@ input double tp_min = 0.0030; // [0.0027-0.0037] минимальный TP
 //+------------------------------------------------------------------+
 input int   loss_skip_hours_k   = 4; // коэф. k - уравнения прямой
 input int   loss_skip_hours_b   = 8; // коэф. b - уравнения прямой
+
+input int   loss_consecutive    = 7; // максимальное кол-во последовательных поражений
+
+double risk_money = 0.0;
 
 //+------------------------------------------------------------------+
 //| Enums
@@ -142,7 +146,8 @@ void setLabelText(long chart_id, string name, string text)
 void showExpertStatus(ExpertStatusEnum status, string text)
 {
   setLabelText(DEF_CHART_ID, label_status, "STATUS[" +
-    TimeToString(saved_time, TIME_MINUTES) + "]: " +
+    TimeToString(saved_time, TIME_MINUTES) + "/" +
+    moneyToStr(risk_money) + "]: " +
     IntegerToString(status, 2, '0') + " " + text);
 }
 #endif
@@ -219,6 +224,14 @@ string priceToStr(double value)
 }
 
 //+-----------------------------------------------------------------+
+//| Преобразовывает деньги в строку
+//+-----------------------------------------------------------------+
+string moneyToStr(double money)
+{
+  return DoubleToString(money, 2);
+}
+
+//+-----------------------------------------------------------------+
 //| Преобразовывает деньги в лоты
 //+-----------------------------------------------------------------+
 double moneyToLots(double money)
@@ -290,7 +303,7 @@ void getCurrentPrice(double &ask, double &bid)
 //+-----------------------------------------------------------------+
 //| Возвращает кол-во последовательных сделок, которые завершились поражением
 //+-----------------------------------------------------------------+
-uint getCountConsecutiveLossDeal(datetime &time_last_loss, double loss)
+uint getCountConsecutiveLossDeal(datetime &time_last_loss, double &resote_money)
 {
   bool res;
   ulong ticket;
@@ -315,11 +328,12 @@ uint getCountConsecutiveLossDeal(datetime &time_last_loss, double loss)
           {
             if (0 == cnt) // запоминаем время последней убыточной сделки
             {
-              loss = 0.0;
+              resote_money = - 2 * profit;
               time_last_loss =(datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
             }
+            else
+              resote_money -= profit; // запоминаем весь убыток
 
-            loss += profit; // запоминаем весь убыток
             cnt++; // увеличиваем кол-во убыточных сделок
           }
           else
@@ -411,6 +425,14 @@ bool calcTrendDimension(double &td, double &th, double &tl)
   }
 
   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Вычисляем сумму депозита которым можно рискнуть в первом ордере
+//+------------------------------------------------------------------+
+double calcFirstDepositRisk()
+{
+  return AccountInfoDouble(ACCOUNT_BALANCE) / MathPow(2, loss_consecutive);
 }
 
 //+------------------------------------------------------------------+
@@ -598,10 +620,6 @@ void OnTick()
   double ask, bid, tp = 0.0, sl = 0.0;
   datetime cur_time;
 
-#ifdef DEF_SHOW_DEBUG_STATUS
-  PrintFormat("%s:%d", __FUNCTION__, __LINE__);
-#endif
-
   // 1. Проверяем наличие позиции
   if (PositionSelect(DEF_SYMBOL))
     return;
@@ -610,7 +628,6 @@ void OnTick()
   if (getCurrentHour(cur_time) && cur_time != saved_time) // если новый час
   {
     uint cnt_last_loss;
-    double loss;
     datetime time_last_loss;
     int loss_skip_hours; // кол-во часов которое нужно подождать до следующего выхода на рынок после поражения
 
@@ -618,7 +635,7 @@ void OnTick()
     saved_time = cur_time; // запоминаем время нового бара
 
     // 3. Проверяем что уже можно выходить на рынок если прошлый раз было поражения
-    cnt_last_loss = getCountConsecutiveLossDeal(time_last_loss, loss);
+    cnt_last_loss = getCountConsecutiveLossDeal(time_last_loss, risk_money);
     if (cnt_last_loss)
     {
       loss_skip_hours = calcLossSkipHours(cnt_last_loss);
@@ -634,6 +651,8 @@ void OnTick()
 #endif
         return;
       }
+    } else {
+      risk_money = calcFirstDepositRisk();
     }
 
     // 4. Вычисляем новый размер тренда
@@ -677,8 +696,16 @@ void OnTick()
   if (ES_OpenOrder_Buy == expert_status ||
       ES_OpenOrder_Sell == expert_status)
   {
+    double dimension;
+
+    if (ES_OpenOrder_Buy == expert_status) {
+      dimension = tp - ask;
+    } else {
+      dimension = bid - tp;
+    }
+
     if (orderSend(ES_OpenOrder_Buy == expert_status ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-      0.1, ES_OpenOrder_Buy == expert_status ? ask : bid, tp, sl))
+      moneyToLots(risk_money / dimension), ES_OpenOrder_Buy == expert_status ? ask : bid, tp, sl))
 
       expert_status = ES_Scan; // сбрасываем состояние эксперта
   }
