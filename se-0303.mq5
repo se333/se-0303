@@ -44,8 +44,8 @@ input double k_rebound = 0.60; // [43%-72%] минимальный ожидае�
 input double tp_min = 0.0030; // [0.0027-0.0037] минимальный TP
 
 //+------------------------------------------------------------------+
-//| Lossing parameters, это параметр показывает через сколько часов после 
-//|   закрытия ордера в убыток(поражения) можно открывать следующий, 
+//| Lossing parameters, это параметр показывает через сколько часов после
+//|   закрытия ордера в убыток(поражения) можно открывать следующий,
 //|   задается уравнением прямой kx + b = y, где x - порядковый номер поражения
 //+------------------------------------------------------------------+
 input int   loss_skip_hours_k   = 4; // коэф. k - уравнения прямой
@@ -290,16 +290,17 @@ void getCurrentPrice(double &ask, double &bid)
 //+-----------------------------------------------------------------+
 //| Возвращает кол-во последовательных сделок, которые завершились поражением
 //+-----------------------------------------------------------------+
-uint getCountConsecutiveLossDeal(datetime &time_last_loss)
+uint getCountConsecutiveLossDeal(datetime &time_last_loss, double loss)
 {
   bool res;
   ulong ticket;
   uint i, total, cnt = 0;
+  double profit;
   datetime cur_datetime = TimeCurrent();
-  
+
   res = HistorySelect(cur_datetime - 30*24*60*60, cur_datetime); // TODO: перенести в другое место
   total = HistoryDealsTotal();
-  
+
   if (res && total)
   {
     for (i = total; i > 0;)
@@ -310,11 +311,15 @@ uint getCountConsecutiveLossDeal(datetime &time_last_loss)
             HistoryDealGetString(ticket, DEAL_SYMBOL) == DEF_SYMBOL &&
             HistoryDealGetInteger(ticket, DEAL_MAGIC) == DEF_EXPERT_MAGIC)
         {
-          if (HistoryDealGetDouble(ticket, DEAL_PROFIT) < 0.0)
+          if ((profit = HistoryDealGetDouble(ticket, DEAL_PROFIT)) < 0.0)
           {
             if (0 == cnt) // запоминаем время последней убыточной сделки
+            {
+              loss = 0.0;
               time_last_loss =(datetime)HistoryDealGetInteger(ticket, DEAL_TIME);
-              
+            }
+
+            loss += profit; // запоминаем весь убыток
             cnt++; // увеличиваем кол-во убыточных сделок
           }
           else
@@ -323,7 +328,7 @@ uint getCountConsecutiveLossDeal(datetime &time_last_loss)
       }
     }
   }
-  
+
   return cnt;
 }
 
@@ -340,7 +345,7 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
 
    //--- parameters of request
    request.action    = TRADE_ACTION_DEAL; // type of trade operation
-   request.symbol    = DEF_SYMBOL;        // symbol   
+   request.symbol    = DEF_SYMBOL;        // symbol
    request.type      = order_type;        // order type
    request.price     = price;             // price for opening
    request.tp        = tp;
@@ -357,11 +362,11 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
 #else
    request.volume    = volume;            // volume of 0.1 lot
 #endif
-   
+
   //--- send the request
   if(!(ret = OrderSend(request, result)))
       PrintFormat("OrderSend error %d", GetLastError());     // if unable to send the request, output the error code
-      
+
 #ifdef DEF_SHOW_DEBUG_STATUS
    //--- information about the operation
    PrintFormat("OrderSend: retcode=%u  deal=%I64u  order=%I64u", result.retcode, result.deal, result.order);
@@ -592,36 +597,37 @@ void OnTick()
 {
   double ask, bid, tp = 0.0, sl = 0.0;
   datetime cur_time;
-  
+
 #ifdef DEF_SHOW_DEBUG_STATUS
   PrintFormat("%s:%d", __FUNCTION__, __LINE__);
 #endif
-  
+
   // 1. Проверяем наличие позиции
   if (PositionSelect(DEF_SYMBOL))
     return;
-  
+
   // 2. Проверяем новый час или начало торговли
   if (getCurrentHour(cur_time) && cur_time != saved_time) // если новый час
   {
     uint cnt_last_loss;
+    double loss;
     datetime time_last_loss;
     int loss_skip_hours; // кол-во часов которое нужно подождать до следующего выхода на рынок после поражения
-    
+
     expert_status = ES_Scan; // сбрасываем состояние эксперта
     saved_time = cur_time; // запоминаем время нового бара
 
     // 3. Проверяем что уже можно выходить на рынок если прошлый раз было поражения
-    cnt_last_loss = getCountConsecutiveLossDeal(time_last_loss);
+    cnt_last_loss = getCountConsecutiveLossDeal(time_last_loss, loss);
     if (cnt_last_loss)
     {
       loss_skip_hours = calcLossSkipHours(cnt_last_loss);
-      
+
       if (cur_time < time_last_loss + loss_skip_hours * 60 *60)
       {
 #ifdef DEF_SHOW_EXPERT_STATUS
-        setLabelText(DEF_CHART_ID, label_trend, "Wait " +          
-          TimeToString(time_last_loss, TIME_DATE) +   
+        setLabelText(DEF_CHART_ID, label_trend, "Wait " +
+          TimeToString(time_last_loss, TIME_DATE) +
           " after " +
           IntegerToString(cnt_last_loss) + " LOSS [" +
           IntegerToString(loss_skip_hours) + "]");
