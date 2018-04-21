@@ -13,6 +13,7 @@
 #define DEF_TREND_MAX_HOURS_AGO    48
 #define DEF_OPEN_DJITTER           0.0003
 #define DEF_EXPERT_MAGIC           0303 // MagicNumber of the expert
+#define DEF_WAIT_OPEN_DEAL_TIME    3 // время в секундах, которое ожидаем открытие позиции
 
 /**/#define DEF_SHOW_EXPERT_STATUS
 #define DEF_SHOW_DEBUG_STATUS/**/
@@ -56,6 +57,7 @@ input int   loss_consecutive    = 5; // максимальное кол-во п�
 
 double risk_money = 0.0;
 uint cnt_last_loss = 0;
+ulong order_ticket = 0;
 
 //+------------------------------------------------------------------+
 //| Enums
@@ -72,7 +74,8 @@ enum ExpertStatusEnum
   ES_AlligatorLips_Buy,
   ES_AlligatorLips_Sell,
   ES_OpenOrder_Buy,
-  ES_OpenOrder_Sell
+  ES_OpenOrder_Sell,
+  ES_WaitOpenDeal
 };
 
 enum LogLevelEnum
@@ -182,6 +185,7 @@ void setExpertStatus(ExpertStatusEnum status)
     case ES_AlligatorLips_Sell:  text = "Price is near lips SELL"; break;
     case ES_OpenOrder_Buy:       text = "Open order BUY"; break;
     case ES_OpenOrder_Sell:      text = "Open order SELL"; break;
+    case ES_WaitOpenDeal:        text = "Wait open deal"; break;
     default:                     text = "Status undefined";
   }
 #endif
@@ -356,7 +360,6 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
   double volume, double price, double tp, double sl)
 {
    //--- declare and initialize the trade request and result of trade request
-   bool ret;
    MqlTradeRequest request={0};
    MqlTradeResult  result={0};
 
@@ -369,6 +372,7 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
    request.sl        = sl;
    request.deviation = 5;                 // allowed deviation from the price
    request.magic     = DEF_EXPERT_MAGIC;  // MagicNumber of the order
+   request.type_filling = ORDER_FILLING_FOK;
 
 #ifdef DEF_DEBUG_FIXED_TP
    double profit = 100.0;
@@ -381,15 +385,26 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
 #endif
 
   //--- send the request
-  if(!(ret = OrderSend(request, result)))
-      PrintFormat("OrderSend error %d", GetLastError());     // if unable to send the request, output the error code
+  if (OrderSend(request, result))
+  {
+    if (result.retcode == TRADE_RETCODE_DONE ||
+        result.retcode == TRADE_RETCODE_PLACED)
+    {
+      if (result.order > 0)
+      {
+        order_ticket = result.order;
+        Print(__FUNCTION__," Order sent in sync mode");
+        return (true);
+      }
+    }
+  }
 
 #ifdef DEF_SHOW_DEBUG_STATUS
-   //--- information about the operation
-   PrintFormat("OrderSend: retcode=%u  deal=%I64u  order=%I64u", result.retcode, result.deal, result.order);
+  //--- information about the operation
+  PrintFormat("Error %d OrderSend: retcode=%u  deal=%I64u  order=%I64u", GetLastError(), result.retcode, result.deal, result.order);
 #endif
 
-   return ret && TRADE_RETCODE_DONE == result.retcode; // request completed
+   return TRADE_RETCODE_DONE == result.retcode; // request completed
 }
 
 //+------------------------------------------------------------------+
@@ -608,11 +623,10 @@ int OnInit()
 //| Expert deinitialization function                                 |
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
-  {
+{
 //--- destroy timer
    EventKillTimer();
-
-  }
+}
 
 
 //+------------------------------------------------------------------+
@@ -623,13 +637,13 @@ void OnTick()
   double ask, bid, tp = 0.0, sl = 0.0;
   datetime cur_time;
 
-  // 1. Проверяем наличие позиции
-  if (PositionSelect(DEF_SYMBOL))
+  // 1. Выходим если состояние проверки установки позиции или есть установленная позиция
+  if (expert_status >= ES_WaitOpenDeal || PositionSelect(DEF_SYMBOL))
     return;
 
   // 2. Проверяем новый час или начало торговли
   if (getCurrentHour(cur_time) && cur_time != saved_time) // если новый час
-  {    
+  {
     datetime time_last_loss;
     int loss_skip_hours; // кол-во часов которое нужно подождать до следующего выхода на рынок после поражения
 
@@ -707,9 +721,12 @@ void OnTick()
     }
 
     if (orderSend(ES_OpenOrder_Buy == expert_status ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-      moneyToLots(risk_money / dimension), ES_OpenOrder_Buy == expert_status ? ask : bid, tp, sl))
-
-      expert_status = ES_Scan; // сбрасываем состояние эксперта
+        moneyToLots(risk_money / dimension), ES_OpenOrder_Buy == expert_status ? ask : bid, tp, sl))
+    {
+      // 11. Ожидаем открытия позиции
+      setExpertStatus(ES_WaitOpenDeal); // ожидаем появления позиции
+      EventSetTimer(DEF_WAIT_OPEN_DEAL_TIME); // запускаем таймер, на случай если сервер не открыл позицию
+    }
   }
 }
 
@@ -718,6 +735,15 @@ void OnTick()
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+  if (expert_status == ES_WaitOpenDeal)
+  {
+    // По какой-то причине сервер не открыл позицию, повторяем попытку открытия ордера
+
+    PRINT_LOG(LOG_Error, "Can not open DEAL, timer expired");
+
+    setExpertStatus(ES_Scan); // начинаем сканирование цен
+    EventKillTimer(); // останавливаем таймер
+  }
 }
 
 //+------------------------------------------------------------------+
@@ -734,7 +760,23 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
                         const MqlTradeResult& result)
 {
+  switch(trans.type)
+  {
+    case TRADE_TRANSACTION_HISTORY_ADD:
+    {
+      if (order_ticket > 0 && trans.order == order_ticket && expert_status == ES_WaitOpenDeal)
+      {
+        // Вот здесь и смотрим что произошло
 
+        SET_DEBUG_STATUS("Order open successfull");
+
+        setExpertStatus(ES_Scan);
+
+        EventKillTimer(); // останавливаем таймер проверки открытия позиции
+      }
+    } break;
+    default: {}
+  }
 }
 
 //+------------------------------------------------------------------+
