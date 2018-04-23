@@ -381,7 +381,7 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
    else
      request.volume    = moneyToLots(profit / (price - tp));
 #else
-   request.volume    = volume;            // volume of 0.1 lot
+   request.volume    = volume;            // volume of N lot
 #endif
 
   //--- send the request
@@ -398,6 +398,8 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
       }
     }
   }
+
+  order_ticket = 0;
 
 #ifdef DEF_SHOW_DEBUG_STATUS
   //--- information about the operation
@@ -634,8 +636,8 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-  double ask, bid, tp = 0.0, sl = 0.0;
   datetime cur_time;
+  double ask, bid, tp, sl, dimension;
 
   // 1. Выходим если состояние проверки установки позиции или есть установленная позиция
   if (expert_status >= ES_WaitOpenDeal || PositionSelect(DEF_SYMBOL))
@@ -647,7 +649,7 @@ void OnTick()
     datetime time_last_loss;
     int loss_skip_hours; // кол-во часов которое нужно подождать до следующего выхода на рынок после поражения
 
-    expert_status = ES_Scan; // сбрасываем состояние эксперта
+    setExpertStatus(ES_Scan); // сбрасываем состояние эксперта
     saved_time = cur_time; // запоминаем время нового бара
 
     // 3. Проверяем что уже можно выходить на рынок если прошлый раз было поражения
@@ -690,42 +692,41 @@ void OnTick()
       setExpertStatus(checkAlligatorOpenMouth(price_lips));
   }
 
-  // 7. Получаем текущую цену
-  getCurrentPrice(ask, bid);
 
-  // 8. Проверяем что текущая цена возле губы Аллигатора
-  if (ES_AlligatorMouth_Buy == expert_status ||
-      ES_AlligatorMouth_Sell == expert_status ||
-      ES_AlligatorLips_Buy == expert_status ||
-      ES_AlligatorLips_Sell == expert_status)
-
-      setExpertStatus(checkAlligatorLips(expert_status, ask, bid, price_lips));
-
-  // 9. Проверяем что отскок еще не завершен и можно установить TP
-  if (ES_AlligatorLips_Buy == expert_status ||
-      ES_AlligatorLips_Sell == expert_status)
+  if (expert_status >= ES_AlligatorMouth_Buy ||
+      expert_status >= ES_AlligatorMouth_Sell)
   {
-    setExpertStatus(checkRebound(expert_status, ask, bid, tp, sl));
-  }
+   // 7. Получаем текущую цену
+   getCurrentPrice(ask, bid);
 
-  // 10. Открываем ордер
-  if (ES_OpenOrder_Buy == expert_status ||
-      ES_OpenOrder_Sell == expert_status)
-  {
-    double dimension;
+   // 8. Проверяем что текущая цена возле губы Аллигатора
+   setExpertStatus(checkAlligatorLips(expert_status, ask, bid, price_lips));
 
-    if (ES_OpenOrder_Buy == expert_status) {
-      dimension = tp - ask;
-    } else {
-      dimension = bid - tp;
-    }
-
-    if (orderSend(ES_OpenOrder_Buy == expert_status ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-        moneyToLots(risk_money / dimension), ES_OpenOrder_Buy == expert_status ? ask : bid, tp, sl))
+    if (ES_AlligatorLips_Buy == expert_status ||
+        ES_AlligatorLips_Sell == expert_status)
     {
-      // 11. Ожидаем открытия позиции
-      setExpertStatus(ES_WaitOpenDeal); // ожидаем появления позиции
-      EventSetTimer(DEF_WAIT_OPEN_DEAL_TIME); // запускаем таймер, на случай если сервер не открыл позицию
+      // 9. Проверяем что отскок еще не завершен
+      setExpertStatus(checkRebound(expert_status, ask, bid, tp, sl));
+
+      // 10. Если можно открывать ордер
+      if (ES_OpenOrder_Buy == expert_status ||
+          ES_OpenOrder_Sell == expert_status)
+      {
+
+        if (ES_OpenOrder_Buy == expert_status) {
+          dimension = tp - ask;
+        } else {
+          dimension = bid - tp;
+        }
+
+        // 10. Отправляем ордер
+        orderSend(ES_OpenOrder_Buy == expert_status ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+            moneyToLots(risk_money / dimension), ES_OpenOrder_Buy == expert_status ? ask : bid, tp, sl);
+
+        // 11. Ожидаем открытия позиции
+        setExpertStatus(ES_WaitOpenDeal); // ожидаем появления позиции
+        EventSetTimer(DEF_WAIT_OPEN_DEAL_TIME); // запускаем таймер, на случай если сервер не открыл позицию
+      }
     }
   }
 }
@@ -738,10 +739,11 @@ void OnTimer()
   if (expert_status == ES_WaitOpenDeal)
   {
     // По какой-то причине сервер не открыл позицию, повторяем попытку открытия ордера
-
     PRINT_LOG(LOG_Error, "Can not open DEAL, timer expired");
 
+    saved_time = 0; // сбрасываем сохраненное время
     setExpertStatus(ES_Scan); // начинаем сканирование цен
+
     EventKillTimer(); // останавливаем таймер
   }
 }
@@ -770,6 +772,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
         SET_DEBUG_STATUS("Order open successfull");
 
+        order_ticket = 0;
         setExpertStatus(ES_Scan);
 
         EventKillTimer(); // останавливаем таймер проверки открытия позиции
