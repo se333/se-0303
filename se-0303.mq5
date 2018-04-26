@@ -27,8 +27,6 @@ input int    trend_hours_ago     = 34;     // [24-48] продолжительн
 input double trend_min_dimension = 0.0085; // минимальный размер тренда
 input double trend_max_dimension = 0.0160; // максимальный размер тренда
 
-double trend_dimension, trend_high, trend_low; // размер, а также максимальное и минимальное значение цены за время тренда
-
 //+------------------------------------------------------------------+
 //| Alligator parameters
 //+------------------------------------------------------------------+
@@ -55,27 +53,20 @@ input int   loss_skip_hours_b   = 4; // коэф. b - уравнения пря�
 input int   loss_consecutive    = 5; // максимальное кол-во последовательных поражений
 
 
-double risk_money = 0.0;
-uint cnt_last_loss = 0;
-ulong order_ticket = 0;
-
 //+------------------------------------------------------------------+
 //| Enums
 //+------------------------------------------------------------------+
 enum ExpertStatusEnum
 {
   ES_Scan,
-  ES_Error,
-  ES_Trend_Min,
-  ES_Trend_Max,
-  ES_Trend_Ok,
-  ES_AlligatorMouth_Buy,
-  ES_AlligatorMouth_Sell,
-  ES_AlligatorLips_Buy,
-  ES_AlligatorLips_Sell,
-  ES_OpenOrder_Buy,
-  ES_OpenOrder_Sell,
   ES_WaitOpenDeal
+};
+
+enum OrderDirectionEnum
+{
+  OD_Unknown,
+  OD_Buy,
+  OD_Sell
 };
 
 enum LogLevelEnum
@@ -84,6 +75,7 @@ enum LogLevelEnum
   LOG_Warning,
   LOG_Info
 };
+
 
 const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
 
@@ -101,7 +93,17 @@ const string label_trend = "labelTrend";
 //+------------------------------------------------------------------+
 //| Static parameters
 //+------------------------------------------------------------------+
-ExpertStatusEnum expert_status = ES_Error; // статус эксперта
+
+double trend_dimension, trend_high, trend_low; // размер, а также максимальное и минимальное значение цены за время тренда
+
+double risk_money = 0.0;
+uint cnt_last_loss = 0;
+ulong order_ticket = 0;
+
+OrderDirectionEnum hour_od = OD_Unknown; // часовое направление для открытия ордера
+
+ExpertStatusEnum expert_status = ES_Scan; // статус эксперта
+
 int handle_alligator = 0; // дескриптор для индикатора Alligator
 double price_lips = 0.0; // цена губы Аллигатора
 datetime saved_time; // время текущего часа
@@ -175,16 +177,6 @@ void setExpertStatus(ExpertStatusEnum status)
 #else
   switch (expert_status) {
     case ES_Scan:                text = "Scan price"; break;
-    case ES_Error:               text = "ERROR"; break;
-    case ES_Trend_Min:           text = "Trend is smaller than min value"; break;
-    case ES_Trend_Max:           text = "Trend is bigger than max value"; break;
-    case ES_Trend_Ok:            text = "Trend is Ok"; break;
-    case ES_AlligatorMouth_Buy:  text = "Mouth opened for BUY"; break;
-    case ES_AlligatorMouth_Sell: text = "Mouth opened for SELL"; break;
-    case ES_AlligatorLips_Buy:   text = "Price is near lips BUY"; break;
-    case ES_AlligatorLips_Sell:  text = "Price is near lips SELL"; break;
-    case ES_OpenOrder_Buy:       text = "Open order BUY"; break;
-    case ES_OpenOrder_Sell:      text = "Open order SELL"; break;
     case ES_WaitOpenDeal:        text = "Wait open deal"; break;
     default:                     text = "Status undefined";
   }
@@ -218,7 +210,7 @@ void printLog(LogLevelEnum level_log, string text)
   PrintFormat("%s: %s:%d %s", log_level_names[level_log], __FUNCTION__, __LINE__, text);
 
 #ifdef DEF_SHOW_EXPERT_STATUS
-  showExpertStatus(ES_Error, text);
+  showExpertStatus(expert_status, text);
 #endif
 }
 
@@ -458,20 +450,16 @@ double calcFirstDepositRisk()
 //+------------------------------------------------------------------+
 //| Проверяет размер тренда на нахождение в разрешенном диапазоне
 //+------------------------------------------------------------------+
-ExpertStatusEnum checkValidTrendDimension()
+bool checkValidTrendDimension()
 {
-  if (trend_dimension < trend_min_dimension)
-    return ES_Trend_Min;
-  else if (trend_dimension > trend_max_dimension)
-    return ES_Trend_Max;
-
-  return ES_Trend_Ok;
+  return trend_dimension >= trend_min_dimension &&
+         trend_dimension <= trend_max_dimension;
 }
 
 //+-----------------------------------------------------------------+
 //| Проверяет что Аллигатор с открытым ртом
 //+-----------------------------------------------------------------+
-ExpertStatusEnum checkAlligatorOpenMouth(double &lips)
+OrderDirectionEnum checkAlligatorOpenMouth(double &lips)
 {
   int i;
 
@@ -485,7 +473,6 @@ ExpertStatusEnum checkAlligatorOpenMouth(double &lips)
   double dimension;
   double arr[DEF_ALLIGATOR_TICK];
   double alligator[DEF_ALLIGATOR_BUFFERS] = { 0 };
-  ExpertStatusEnum status = ES_Trend_Ok;
 
   /* Подготавливаем текущие значения цен */
   for (i = 0; i < DEF_ALLIGATOR_BUFFERS; i++)
@@ -496,7 +483,7 @@ ExpertStatusEnum checkAlligatorOpenMouth(double &lips)
     } else {
       PRINT_LOG(LOG_Error, "can not copy iAlligator(" +
         IntegerToString(handle_alligator) + ") data to the array " + IntegerToString(i));
-      return ES_Error;
+      return OD_Unknown;
     }
   }
 
@@ -510,12 +497,12 @@ ExpertStatusEnum checkAlligatorOpenMouth(double &lips)
     if (alligator[DEF_JAW] + dimension < alligator[DEF_TEETH] &&
         alligator[DEF_TEETH] + dimension < alligator[DEF_LIPS])
 
-          status = ES_AlligatorMouth_Sell;
+        return OD_Sell;
   } else {
     if (alligator[DEF_JAW] - dimension > alligator[DEF_TEETH] &&
         alligator[DEF_TEETH] - dimension > alligator[DEF_LIPS])
 
-        status = ES_AlligatorMouth_Buy;
+        return OD_Buy;
   }
 
   SET_DEBUG_STATUS("D: " + priceToStr(dimension) +
@@ -523,36 +510,30 @@ ExpertStatusEnum checkAlligatorOpenMouth(double &lips)
     " T: " + priceToStr(alligator[DEF_TEETH]) +
     " L: " + priceToStr(alligator[DEF_LIPS]));
 
-  return status;
+  return OD_Unknown;
 }
 
 //+-----------------------------------------------------------------+
 //| Проверяет что текущая цена возле губы Аллигатора
 //+-----------------------------------------------------------------+
-ExpertStatusEnum checkAlligatorLips(ExpertStatusEnum status, double ask, double bid, double lips)
+OrderDirectionEnum checkAlligatorLips(OrderDirectionEnum od, double ask, double bid, double lips)
 {
-  if (ES_AlligatorMouth_Buy == status ||
-      ES_AlligatorLips_Buy == status)
+  if (OD_Buy == od)
   {
     if (ask > lips && ask < lips + DEF_OPEN_DJITTER)
-      status = ES_AlligatorLips_Buy;
-    else
-      status = ES_AlligatorMouth_Buy;
-  } else if (ES_AlligatorMouth_Sell == status ||
-             ES_AlligatorLips_Sell == status) {
+      return OD_Buy;
+  } else if (OD_Sell == od) {
     if (bid < lips && bid > lips - DEF_OPEN_DJITTER)
-      status = ES_AlligatorLips_Sell;
-    else
-      status = ES_AlligatorMouth_Sell;
+      return OD_Sell;
   }
 
-  return status;
+  return OD_Unknown;
 }
 
 //+------------------------------------------------------------------+
 //| Проверяет что отскок еще не завершен и можно установить TP                                   |
 //+------------------------------------------------------------------+
-ExpertStatusEnum checkRebound(ExpertStatusEnum status,
+OrderDirectionEnum checkRebound(OrderDirectionEnum od,
   double ask, double bid, double &tp, double &sl)
 {
   double tp_dimension = 0.0;
@@ -563,7 +544,7 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
   // Вычисляем размер отскока
   rebound_dimension = k_rebound * trend_dimension;
 
-  if (ES_AlligatorLips_Buy == status)
+  if (OD_Buy == od)
   {
     tp_dimension = rebound_dimension - (ask - trend_low);
     if (tp_dimension >= tp_min)
@@ -571,9 +552,9 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
       tp = ask + tp_dimension;
       sl = ask - tp_dimension;
 
-      status = ES_OpenOrder_Buy;
+      return OD_Buy;
     }
-  } else if (ES_AlligatorLips_Sell == status) {
+  } else if (OD_Sell == od) {
 
     tp_dimension = rebound_dimension - (trend_high - bid);
     if (tp_dimension >= tp_min)
@@ -581,7 +562,7 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
       tp = bid - tp_dimension;
       sl = bid + tp_dimension;
 
-      status = ES_OpenOrder_Sell;
+      return OD_Sell;
     }
   }
 
@@ -589,7 +570,7 @@ ExpertStatusEnum checkRebound(ExpertStatusEnum status,
     " TP: " + priceToStr(tp_dimension) +
     " SL: " + priceToStr(tp_dimension));
 
-  return status;
+  return OD_Unknown;
 }
 
 //+------------------------------------------------------------------+
@@ -637,7 +618,6 @@ void OnDeinit(const int reason)
 void OnTick()
 {
   datetime cur_time;
-  double ask, bid, tp, sl, dimension;
 
   // 1. Выходим если состояние проверки установки позиции или есть установленная позиция
   if (expert_status >= ES_WaitOpenDeal || PositionSelect(DEF_SYMBOL))
@@ -649,7 +629,7 @@ void OnTick()
     datetime time_last_loss;
     int loss_skip_hours; // кол-во часов которое нужно подождать до следующего выхода на рынок после поражения
 
-    setExpertStatus(ES_Scan); // сбрасываем состояние эксперта
+    hour_od = OD_Unknown; // сбрасываем часовое направление ордера
     saved_time = cur_time; // запоминаем время нового бара
 
     // 3. Проверяем что уже можно выходить на рынок если прошлый раз было поражения
@@ -685,45 +665,40 @@ void OnTick()
 #endif
 
     // 5. Проверяем что размер тренда в установленном диапазоне
-    setExpertStatus(checkValidTrendDimension());
-
-    // 6. Проверяем что Аллигатор с открытым ртом
-    if (ES_Trend_Ok == expert_status)
-      setExpertStatus(checkAlligatorOpenMouth(price_lips));
+    if (checkValidTrendDimension())
+    {
+      // 6. Проверяем что Аллигатор с открытым ртом
+      hour_od = checkAlligatorOpenMouth(price_lips);
+    }
   }
 
-
-  if (expert_status >= ES_AlligatorMouth_Buy ||
-      expert_status >= ES_AlligatorMouth_Sell)
+  // 7. Если часовые параметры в норме
+  if (OD_Unknown != hour_od)
   {
-   // 7. Получаем текущую цену
+    OrderDirectionEnum cur_od = hour_od;
+    double ask, bid, tp, sl, dimension;
+
+   // 8. Получаем текущую цену
    getCurrentPrice(ask, bid);
 
-   // 8. Проверяем что текущая цена возле губы Аллигатора
-   setExpertStatus(checkAlligatorLips(expert_status, ask, bid, price_lips));
+   // 9. Проверяем что текущая цена возле губы Аллигатора
+   cur_od = checkAlligatorLips(cur_od, ask, bid, price_lips);
 
-    if (ES_AlligatorLips_Buy == expert_status ||
-        ES_AlligatorLips_Sell == expert_status)
+    if (OD_Unknown != cur_od)
     {
-      // 9. Проверяем что отскок еще не завершен
-      setExpertStatus(checkRebound(expert_status, ask, bid, tp, sl));
+      // 10. Проверяем что отскок еще не завершен
+      cur_od = checkRebound(cur_od, ask, bid, tp, sl);
 
-      // 10. Если можно открывать ордер
-      if (ES_OpenOrder_Buy == expert_status ||
-          ES_OpenOrder_Sell == expert_status)
+      // 11. Если можно открывать ордер
+      if (OD_Unknown != cur_od)
       {
+        dimension = OD_Buy == cur_od ? tp - ask : bid - tp;
 
-        if (ES_OpenOrder_Buy == expert_status) {
-          dimension = tp - ask;
-        } else {
-          dimension = bid - tp;
-        }
+        // 12. Отправляем ордер
+        orderSend(OD_Buy == cur_od ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+            moneyToLots(risk_money / dimension), OD_Buy == cur_od ? ask : bid, tp, sl);
 
-        // 10. Отправляем ордер
-        orderSend(ES_OpenOrder_Buy == expert_status ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-            moneyToLots(risk_money / dimension), ES_OpenOrder_Buy == expert_status ? ask : bid, tp, sl);
-
-        // 11. Ожидаем открытия позиции
+        // 13. Ожидаем открытия позиции
         setExpertStatus(ES_WaitOpenDeal); // ожидаем появления позиции
         EventSetTimer(DEF_WAIT_OPEN_DEAL_TIME); // запускаем таймер, на случай если сервер не открыл позицию
       }
