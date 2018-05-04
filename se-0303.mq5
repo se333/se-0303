@@ -52,7 +52,12 @@ input int   loss_skip_hours_b   = 4; // коэф. b - уравнения пря�
 
 input int   loss_consecutive    = 5; // максимальное кол-во последовательных поражений
 
+//+------------------------------------------------------------------+
+//| Safing SL parameters
+//+------------------------------------------------------------------+
+input double k_safing_sl = 0.50; // защитный SL, который устанавливается если позиция перешла в профит
 
+//+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
 //| Enums
 //+------------------------------------------------------------------+
@@ -107,6 +112,8 @@ ExpertStatusEnum expert_status = ES_Scan; // статус эксперта
 int handle_alligator = 0; // дескриптор для индикатора Alligator
 double price_lips = 0.0; // цена губы Аллигатора
 datetime saved_time; // время текущего часа
+
+bool safing_sl_check = true; // флаг необходимости проверки установки защитного SL
 
 #ifdef DEF_SHOW_DEBUG_STATUS
 string text_debug_status;
@@ -348,7 +355,7 @@ uint getCountConsecutiveLossDeal(datetime &time_last_loss, double &resote_money)
 //+------------------------------------------------------------------+
 //| Открывает ордер
 //+------------------------------------------------------------------+
-bool orderSend(ENUM_ORDER_TYPE order_type,
+bool openOrder(ENUM_ORDER_TYPE order_type,
   double volume, double price, double tp, double sl)
 {
    //--- declare and initialize the trade request and result of trade request
@@ -395,10 +402,113 @@ bool orderSend(ENUM_ORDER_TYPE order_type,
 
 #ifdef DEF_SHOW_DEBUG_STATUS
   //--- information about the operation
-  PrintFormat("Error %d OrderSend: retcode=%u  deal=%I64u  order=%I64u", GetLastError(), result.retcode, result.deal, result.order);
+  PrintFormat("Error %d openOrder: retcode=%u  deal=%I64u  order=%I64u", GetLastError(), result.retcode, result.deal, result.order);
 #endif
 
    return TRADE_RETCODE_DONE == result.retcode; // request completed
+}
+
+//+------------------------------------------------------------------+
+//| Сдвигает SL и/или TP у откытой позиции
+//+------------------------------------------------------------------+
+bool movePositionSLTP(ulong position_ticket, double tp, double sl)
+{
+   MqlTradeRequest request;
+   MqlTradeResult  result;
+   
+   //--- установка параметров операции
+   request.action   = TRADE_ACTION_SLTP; // тип торговой операции
+   request.position = position_ticket;   // тикет позиции
+   request.symbol   = DEF_SYMBOL;        // символ 
+   request.sl       = sl;                // Stop Loss позиции
+   request.tp       = tp;                // Take Profit позиции
+   request.magic    = DEF_EXPERT_MAGIC;  // MagicNumber позиции
+   
+   //--- отправка запроса
+   if (!OrderSend(request, result))
+   {
+     PrintFormat("OrderSend error %d",GetLastError());  // если отправить запрос не удалось, вывести код ошибки
+     return false;
+   }
+   
+   //--- информация об операции   
+   PrintFormat("retcode=%u  deal=%I64u  order=%I64u", result.retcode, result.deal, result.order);
+   
+   return TRADE_RETCODE_DONE == result.retcode;
+}
+
+//+------------------------------------------------------------------+
+//| Проверяет возможность установки защитного SL
+//+------------------------------------------------------------------+
+bool checkAndSetSafingSL(double ask, double bid)
+{
+   ulong  position_ticket; // тикет позиции
+   double sl, tp, op, dimension;
+   int i, total = PositionsTotal(); // количество открытых позиций
+   
+   //--- перебор всех открытых позиций
+   for (i = 0; i < total; i++)
+   {      
+      position_ticket = PositionGetTicket(i);// тикет позиции
+      
+      sl = PositionGetDouble(POSITION_SL);  // Stop Loss позиции
+      tp = PositionGetDouble(POSITION_TP);  // Take Profit позиции
+      op = PositionGetDouble(POSITION_PRICE_OPEN);
+      
+      ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);  // тип позиции
+      
+      /*string position_symbol=PositionGetString(POSITION_SYMBOL); // символ 
+      int    digits=(int)SymbolInfoInteger(position_symbol,SYMBOL_DIGITS); // количество знаков после запятой
+      ulong  magic=PositionGetInteger(POSITION_MAGIC); // MagicNumber позиции
+      double volume=PositionGetDouble(POSITION_VOLUME);    // объем позиции*/
+      
+      //--- вывод информации о позиции
+      PrintFormat("#%I64u %s  open: %s  sl: %s  tp: %s",
+                  position_ticket,                  
+                  EnumToString(type),
+                  priceToStr(op),
+                  priceToStr(sl),
+                  priceToStr(tp));
+
+      if (type == POSITION_TYPE_BUY)
+      {        
+        dimension = (tp - op) * k_safing_sl;
+        
+        if (bid >= op + dimension) // если цена близка к TP
+        {          
+          if (sl < op + DEF_OPEN_DJITTER) // если защитный SL еще не установлен
+          {
+            // Вычисляем новый SL
+            sl = op + DEF_OPEN_DJITTER;
+            
+            // Сдвигаем защитный SL
+            movePositionSLTP(position_ticket, tp, sl);
+          }
+          
+          safing_sl_check = false; // TODO: неверная обработка при кол-ве позиций более одной
+        }
+        
+      } else { /* POSITION_TYPE_SELL */
+
+        dimension = (op - tp) * k_safing_sl;
+        
+        if (ask <= op - dimension) // если цена близка к TP
+        {          
+          if (sl > op - DEF_OPEN_DJITTER) // если защитный SL еще не установлен
+          {
+            // Вычисляем новый SL
+            sl = op - DEF_OPEN_DJITTER;
+            
+            // Сдвигаем защитный SL
+            movePositionSLTP(position_ticket, tp, sl);
+          }
+          
+          safing_sl_check = false;  // TODO: неверная обработка при кол-ве позиций более одной
+        }
+      }
+   }
+   
+   return true; // TODO: неверная обработка при кол-ве позиций более одной
 }
 
 //+------------------------------------------------------------------+
@@ -619,9 +729,25 @@ void OnTick()
 {
   datetime cur_time;
 
-  // 1. Выходим если состояние проверки установки позиции или есть установленная позиция
-  if (expert_status >= ES_WaitOpenDeal || PositionSelect(DEF_SYMBOL))
+  // 0. Выходим если состояние проверки установки позиции
+  if (expert_status >= ES_WaitOpenDeal)
     return;
+
+  // 1. Если есть установленная позиция, то проверяем необходимость установки защитного SL
+  if (PositionSelect(DEF_SYMBOL))
+  {
+    if (safing_sl_check)
+    {
+      double ask, bid;
+
+      // Получаем текущую цену
+      getCurrentPrice(ask, bid);
+      
+      checkAndSetSafingSL(ask, bid);
+    }
+    
+    return;
+  }
 
   // 2. Проверяем новый час или начало торговли
   if (getCurrentHour(cur_time) && cur_time != saved_time) // если новый час
@@ -695,7 +821,7 @@ void OnTick()
         dimension = OD_Buy == cur_od ? tp - ask : bid - tp;
 
         // 12. Отправляем ордер
-        orderSend(OD_Buy == cur_od ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+        openOrder(OD_Buy == cur_od ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
             moneyToLots(risk_money / dimension), OD_Buy == cur_od ? ask : bid, tp, sl);
 
         // 13. Ожидаем открытия позиции
@@ -749,6 +875,9 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
         order_ticket = 0;
         setExpertStatus(ES_Scan);
+        
+        if (k_safing_sl > 0.0) // проверяем что нужно ставить защитный SL
+          safing_sl_check = true; // разрешаем проверку и установку защитного SL
 
         EventKillTimer(); // останавливаем таймер проверки открытия позиции
       }
