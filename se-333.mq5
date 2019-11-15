@@ -20,23 +20,30 @@
 
 /* #define DEF_DEBUG_FIXED_TP */         // эта отладка для открытия позиций с одинаковыми TP 10.0
 
-
-input double dist_real_stop  = 0.0033; // расстояние от точки открытия сделки до реальных стопов(SL/TP)
+//+------------------------------------------------------------------+
+//| Входные параметры
+//+------------------------------------------------------------------+
+input double real_balance = 133.0; // баланс
+input int cnt_attemps     = 5;     // кол-во попыток выиграть
+input int cur_attemp      = 5;     // номер текущей попытки выиграть (5..1)
 
 //+------------------------------------------------------------------+
-//| Коэфициенты 
+//| Коэффициенты 
 //+------------------------------------------------------------------+
-input double k_dummy_stop   = 0.30; // добавочный коэф. для ложных стопов(SL/TP)
 input double k_protected_sl = 0.70; // коэф. защитного SL, который устанавливается если сделка перешла в профит // TODO: реализовать
-input double k_protected_sl = 0.70; // коэф. защитного SL, который устанавливается если сделка перешла в профит // TODO: реализовать
+
+//+------------------------------------------------------------------+
+//| Константы
+//+------------------------------------------------------------------+
+double real_dist_stop  = 0.0030; // расстояние от установленного TP до реальных стопов(SL/TP)
 
 //+------------------------------------------------------------------+
 //| Enums
 //+------------------------------------------------------------------+
 enum ExpertStatusEnum
 {
-  ES_Scan,
-  ES_WaitOpenDeal
+  ESE_DealGuard,
+  ESE_WaitOpenDeal
 };
 
 enum OrderDirectionEnum
@@ -131,10 +138,10 @@ void setLabelText(long chart_id, string name, string text)
 //+-----------------------------------------------------------------+
 void showExpertStatus(ExpertStatusEnum status, string text)
 {
-  setLabelText(DEF_CHART_ID, label_status, "STATUS[" +
-    TimeToString(saved_time, TIME_MINUTES) + "/" +
-    IntegerToString(cnt_last_loss) + " / " +
-    moneyToStr(risk_money) + "]: " +
+  setLabelText(DEF_CHART_ID, label_status, "Balance: " +
+    moneyToStr(real_balance) + " [" +    
+    IntegerToString(cur_attemp) + " / " +
+    IntegerToString(cnt_attemps) + "] " +
     IntegerToString(status, 2, '0') + " " + text);
 }
 #endif
@@ -155,8 +162,8 @@ void setExpertStatus(ExpertStatusEnum status)
   text = text_debug_status;
 #else
   switch (expert_status) {
-    case ES_Scan:                text = "Scan price"; break;
-    case ES_WaitOpenDeal:        text = "Wait open deal"; break;
+    case ESE_DealGuard:          text = "Deal guard"; break;
+    case ESE_WaitOpenDeal:       text = "Wait open deal"; break;
     default:                     text = "Status undefined";
   }
 #endif
@@ -166,7 +173,7 @@ void setExpertStatus(ExpertStatusEnum status)
 }
 
 //+-----------------------------------------------------------------+
-//| Выводит выводит отладку состояния советника
+//| Выводит отладку состояния советника
 //+-----------------------------------------------------------------+
 #ifdef DEF_SHOW_DEBUG_STATUS
 
