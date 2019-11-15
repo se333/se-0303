@@ -24,7 +24,6 @@
 //| Входные параметры
 //+------------------------------------------------------------------+
 input double real_balance = 133.0; // баланс
-input int cnt_attemps     = 5;     // кол-во попыток выиграть
 input int cur_attemp      = 5;     // номер текущей попытки выиграть (5..1)
 
 //+------------------------------------------------------------------+
@@ -140,8 +139,8 @@ void showExpertStatus(ExpertStatusEnum status, string text)
 {
   setLabelText(DEF_CHART_ID, label_status, "Balance: " +
     moneyToStr(real_balance) + " [" +    
-    IntegerToString(cur_attemp) + " / " +
-    IntegerToString(cnt_attemps) + "] " +
+    IntegerToString(cur_attemp) + " / " + 
+    moneyToStr(calcFirstDepositRisk())+
     IntegerToString(status, 2, '0') + " " + text);
 }
 #endif
@@ -213,7 +212,7 @@ string priceToStr(double value)
 //+-----------------------------------------------------------------+
 string moneyToStr(double money)
 {
-  return DoubleToString(money, 2);
+  return "$" + DoubleToString(money, 2);
 }
 
 //+-----------------------------------------------------------------+
@@ -537,8 +536,12 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-  datetime cur_time;
+   setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
+  
 #ifdef DEF__
+
+datetime cur_time;
+  
   // 0. Выходим если состояние проверки установки позиции
   if (expert_status >= ES_WaitOpenDeal)
     return;
