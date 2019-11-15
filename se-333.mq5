@@ -86,7 +86,7 @@ ulong order_ticket = 0;
 
 OrderDirectionEnum hour_od = OD_Unknown; // часовое направление для открытия ордера
 
-ExpertStatusEnum expert_status = ES_Scan; // статус эксперта
+ExpertStatusEnum expert_status = ESE_WaitOpenDeal; // статус эксперта
 
 int handle_alligator = 0; // дескриптор для индикатора Alligator
 double price_lips = 0.0; // цена губы Аллигатора
@@ -421,6 +421,7 @@ bool movePositionSLTP(ulong position_ticket, double tp, double sl)
 //+------------------------------------------------------------------+
 bool checkAndSetSafingSL(double ask, double bid)
 {
+#ifdef DEF__
    ulong  position_ticket; // тикет позиции
    double sl, tp, op, dimension;
    int i, total = PositionsTotal(); // количество открытых позиций
@@ -486,190 +487,20 @@ bool checkAndSetSafingSL(double ask, double bid)
         }
       }
    }
-   
+#endif   
    return true; // TODO: неверная обработка при кол-ве позиций более одной
 }
 
-//+------------------------------------------------------------------+
-//| Рассчитыват размер тренда
-//+------------------------------------------------------------------+
-bool calcTrendDimension(double &td, double &th, double &tl)
-{
-  int hour;
-  double high_array[DEF_TREND_MAX_HOURS_AGO];
-  double low_array[DEF_TREND_MAX_HOURS_AGO];
-
-  if (trend_hours_ago <= DEF_TREND_MAX_HOURS_AGO &&
-      trend_hours_ago == CopyHigh(DEF_SYMBOL, DEF_TIMEFRAME, 0, trend_hours_ago, high_array) &&
-      trend_hours_ago == CopyLow(DEF_SYMBOL, DEF_TIMEFRAME, 0, trend_hours_ago, low_array))
-  {
-    th = 0;
-    tl = low_array[0];
-
-    /* 1. Вычисляем максимальную и минимальную цену за указанный период времени */
-    for (hour = 0; hour < trend_hours_ago; hour++)
-    {
-      if (high_array[hour] > th)
-        th = high_array[hour];
-      if (low_array[hour] < tl)
-        tl = low_array[hour];
-    }
-
-    /* 2. Определяем расстояние между максимальным и минимальным значениями */
-    td = th - tl;
-
-    return true;
-
-  } else {
-    td = th = tl = 0;
-    PRINT_LOG(LOG_Error, "can not recieve Low and High array");
-  }
-
-  return false;
-}
 
 //+------------------------------------------------------------------+
 //| Вычисляем сумму депозита которым можно рискнуть в первом ордере
 //+------------------------------------------------------------------+
 double calcFirstDepositRisk()
 {
-  return AccountInfoDouble(ACCOUNT_BALANCE) / MathPow(2, loss_consecutive);
+  /*return AccountInfoDouble(ACCOUNT_BALANCE) / MathPow(2, loss_consecutive);*/
+  return real_balance / MathPow(2, cur_attemp);
 }
 
-//+------------------------------------------------------------------+
-//| Проверяет размер тренда на нахождение в разрешенном диапазоне
-//+------------------------------------------------------------------+
-bool checkValidTrendDimension()
-{
-  return trend_dimension >= trend_min_dimension &&
-         trend_dimension <= trend_max_dimension;
-}
-
-//+-----------------------------------------------------------------+
-//| Проверяет что Аллигатор с открытым ртом
-//+-----------------------------------------------------------------+
-OrderDirectionEnum checkAlligatorOpenMouth(double &lips)
-{
-  int i;
-
-#define DEF_ALLIGATOR_TICK      1
-
-#define DEF_JAW                 0
-#define DEF_TEETH               1
-#define DEF_LIPS                2
-#define DEF_ALLIGATOR_BUFFERS   3
-
-  double dimension;
-  double arr[DEF_ALLIGATOR_TICK];
-  double alligator[DEF_ALLIGATOR_BUFFERS] = { 0 };
-
-  /* Подготавливаем текущие значения цен */
-  for (i = 0; i < DEF_ALLIGATOR_BUFFERS; i++)
-  {
-    if (CopyBuffer(handle_alligator, i, 0, DEF_ALLIGATOR_TICK, arr) == DEF_ALLIGATOR_TICK)
-    {
-      alligator[i] = arr[0];
-    } else {
-      PRINT_LOG(LOG_Error, "can not copy iAlligator(" +
-        IntegerToString(handle_alligator) + ") data to the array " + IntegerToString(i));
-      return OD_Unknown;
-    }
-  }
-
-  /* Вычисляем размер минимально необходимого расстояния между челюстью, зубами и губами аллигатора */
-  dimension = trend_dimension * k_alligator_open_mouth;
-  lips = alligator[DEF_LIPS];
-
-  /* Проверяем что расстояние между челюстью, зубами и губами аллигатора достаточное - пасть открыта */
-  if (alligator[DEF_JAW] < alligator[DEF_LIPS])
-  {
-    if (alligator[DEF_JAW] + dimension < alligator[DEF_TEETH] &&
-        alligator[DEF_TEETH] + dimension < alligator[DEF_LIPS])
-
-        return OD_Sell;
-  } else {
-    if (alligator[DEF_JAW] - dimension > alligator[DEF_TEETH] &&
-        alligator[DEF_TEETH] - dimension > alligator[DEF_LIPS])
-
-        return OD_Buy;
-  }
-
-  SET_DEBUG_STATUS("D: " + priceToStr(dimension) +
-    " J: " + priceToStr(alligator[DEF_JAW]) +
-    " T: " + priceToStr(alligator[DEF_TEETH]) +
-    " L: " + priceToStr(alligator[DEF_LIPS]));
-
-  return OD_Unknown;
-}
-
-//+-----------------------------------------------------------------+
-//| Проверяет что текущая цена возле губы Аллигатора
-//+-----------------------------------------------------------------+
-OrderDirectionEnum checkAlligatorLips(OrderDirectionEnum od, double ask, double bid, double lips)
-{
-  if (OD_Buy == od)
-  {
-    if (ask > lips && ask < lips + DEF_OPEN_DJITTER)
-      return OD_Buy;
-  } else if (OD_Sell == od) {
-    if (bid < lips && bid > lips - DEF_OPEN_DJITTER)
-      return OD_Sell;
-  }
-
-  return OD_Unknown;
-}
-
-//+------------------------------------------------------------------+
-//| Проверяет что отскок еще не завершен и можно установить TP                                   |
-//+------------------------------------------------------------------+
-OrderDirectionEnum checkRebound(OrderDirectionEnum od,
-  double ask, double bid, double &tp, double &sl)
-{
-  double tp_dimension = 0.0;
-  double rebound_dimension = 0.0;
-
-  tp = sl = 0.0;
-
-  // Вычисляем размер отскока
-  rebound_dimension = k_rebound * trend_dimension;
-
-  if (OD_Buy == od)
-  {
-    tp_dimension = rebound_dimension - (ask - trend_low);
-    if (tp_dimension >= tp_min)
-    {
-      tp = ask + tp_dimension;
-      sl = ask - tp_dimension;
-
-      return OD_Buy;
-    }
-  } else if (OD_Sell == od) {
-
-    tp_dimension = rebound_dimension - (trend_high - bid);
-    if (tp_dimension >= tp_min)
-    {
-      tp = bid - tp_dimension;
-      sl = bid + tp_dimension;
-
-      return OD_Sell;
-    }
-  }
-
-  SET_DEBUG_STATUS("D: " + priceToStr(rebound_dimension) +
-    " TP: " + priceToStr(tp_dimension) +
-    " SL: " + priceToStr(tp_dimension));
-
-  return OD_Unknown;
-}
-
-//+------------------------------------------------------------------+
-//| Вычисляет время в часах, которое необходимо подождать до следующего
-//|   выхода на рынок после поражения
-//+------------------------------------------------------------------+
-int calcLossSkipHours(int cnt_loss)
-{
-  return loss_skip_hours_k * cnt_loss + loss_skip_hours_b;
-}
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -679,10 +510,10 @@ int OnInit()
 
 #ifdef DEF_SHOW_DEBUG_STATUS
   CreateLabel(DEF_CHART_ID, label_status, "STATUS:", 0, 5, 20, clrYellow);
-  CreateLabel(DEF_CHART_ID, label_trend, "TREND:", 0, 5, 40, clrYellow);
+  CreateLabel(DEF_CHART_ID, label_trend, "INFO:", 0, 5, 40, clrYellow);
 #endif
 
-  handle_alligator = iAlligator(DEF_SYMBOL, DEF_TIMEFRAME, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN);
+  /* handle_alligator = iAlligator(DEF_SYMBOL, DEF_TIMEFRAME, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN); */
 
 //--- create timer
 /*   EventSetTimer(60);*/
@@ -707,7 +538,7 @@ void OnDeinit(const int reason)
 void OnTick()
 {
   datetime cur_time;
-
+#ifdef DEF__
   // 0. Выходим если состояние проверки установки позиции
   if (expert_status >= ES_WaitOpenDeal)
     return;
@@ -809,6 +640,7 @@ void OnTick()
       }
     }
   }
+#endif
 }
 
 //+------------------------------------------------------------------+
@@ -816,16 +648,17 @@ void OnTick()
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-  if (expert_status == ES_WaitOpenDeal)
+#ifdef DEF__
+  if (expert_status == ESE_WaitOpenDeal)
   {
     // По какой-то причине сервер не открыл позицию, повторяем попытку открытия ордера
     PRINT_LOG(LOG_Error, "Can not open DEAL, timer expired");
 
-    saved_time = 0; // сбрасываем сохраненное время
     setExpertStatus(ES_Scan); // начинаем сканирование цен
 
     EventKillTimer(); // останавливаем таймер
   }
+#endif
 }
 
 //+------------------------------------------------------------------+
@@ -846,17 +679,19 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
   {
     case TRADE_TRANSACTION_HISTORY_ADD:
     {
-      if (order_ticket > 0 && trans.order == order_ticket && expert_status == ES_WaitOpenDeal)
+      if (order_ticket > 0 && trans.order == order_ticket && expert_status == ESE_WaitOpenDeal)
       {
         // Вот здесь и смотрим что произошло
 
         SET_DEBUG_STATUS("Order open successfull");
 
         order_ticket = 0;
-        setExpertStatus(ES_Scan);
+        setExpertStatus(ESE_DealGuard);
         
+#ifdef DEF__        
         if (k_safing_sl > 0.0) // проверяем что нужно ставить защитный SL
           safing_sl_check = true; // разрешаем проверку и установку защитного SL
+#endif
 
         EventKillTimer(); // останавливаем таймер проверки открытия позиции
       }
