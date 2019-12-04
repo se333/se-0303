@@ -36,7 +36,7 @@ input double input_k_protected_sl = 0.70; // коэф. защитного SL, к
 //+------------------------------------------------------------------+
 //| Константы
 //+------------------------------------------------------------------+
-const double param_real_dist_stop  = 0.0030; // расстояние от установленного TP до реальных стопов(SL/TP)
+const double param_real_dist_stop  = 0.0010; // расстояние от установленного TP до реальных стопов(SL/TP)
 const double param_djitter         = 0.0003; // джитер при котором не изменяются SL/TP
 
 //+------------------------------------------------------------------+
@@ -397,19 +397,84 @@ bool movePositionSLTP(ulong position_ticket, double tp, double sl)
    request.tp       = tp;                // Take Profit позиции
    request.magic    = DEF_EXPERT_MAGIC;  // MagicNumber позиции
    
-   //--- отправка запроса
+   // отправка запроса
    if (!OrderSend(request, result))
    {
      PrintFormat("OrderSend error %d",GetLastError());  // если отправить запрос не удалось, вывести код ошибки
      return false;
    }
    
-   //--- информация об операции   
-   PrintFormat("retcode=%u  deal=%I64u  order=%I64u", result.retcode, result.deal, result.order);
+   // информация об операции   
+   PrintFormat("%s retcode=%u  deal=%I64u  order=%I64u", __FUNCTION__, result.retcode, result.deal, result.order);
    
    return TRADE_RETCODE_DONE == result.retcode;
 }
 
+//+------------------------------------------------------------------+
+//| Удаляет ордер
+//+------------------------------------------------------------------+
+bool closeOrder(ulong position_ticket)
+{
+  MqlTradeResult result={0};
+  MqlTradeRequest request={0};
+
+  request.action = TRADE_ACTION_DEAL;
+  request.position = position_ticket;
+  request.symbol = DEF_SYMBOL;
+  /* request.volume = volume; */
+  request.deviation = 5; // допустимое отклонение от цены
+  /* request.magic =EXPERT_MAGIC; */
+ 
+ if(type==POSITION_TYPE_BUY)
+ {
+  request.price=SymbolInfoDouble(DEF_SYMBOL, SYMBOL_BID);
+ request.type =ORDER_TYPE_SELL;
+  
+  // отправка запроса
+  if (!OrderSend(request, result))
+  {
+     PrintFormat("OrderSend error %d",GetLastError());  // если отправить запрос не удалось, вывести код ошибки
+     return false;
+   }
+   
+   // информация об операции   
+   PrintFormat("%s retcode=%u  deal=%I64u  order=%I64u", __FUNCTION__, result.retcode, result.deal, result.order);
+   
+   return TRADE_RETCODE_DONE == result.retcode;
+   
+   
+   
+   
+   
+
+ //--- установка параметров операции
+ request.action =TRADE_ACTION_DEAL; // тип торговой операции
+ request.position =position_ticket; // тикет позиции
+ request.symbol =position_symbol; // символ
+ request.volume =volume; // объем позиции
+ request.deviation=5; // допустимое отклонение от цены
+ request.magic =EXPERT_MAGIC; // MagicNumber позиции
+ //--- установка цены и типа ордера в зависимости от типа позиции
+ if(type==POSITION_TYPE_BUY)
+ {
+ request.price=SymbolInfoDouble(position_symbol,SYMBOL_BID);
+ request.type =ORDER_TYPE_SELL;
+ }
+ else
+ {
+ request.price=SymbolInfoDouble(position_symbol,SYMBOL_ASK);
+ request.type =ORDER_TYPE_BUY;
+ }
+ //--- вывод информации о закрытии
+ PrintFormat("Close #%I64d %s %s",position_ticket,position_symbol,EnumToString(type));
+ //--- отправка запроса
+ if(!OrderSend(request,result))
+ PrintFormat("OrderSend error %d",GetLastError()); // если отправить запрос не удалось, вывести код ошибки
+ //--- информация об операции
+ PrintFormat("retcode=%u deal=%I64u order=%I64u",result.retcode,result.deal,result.order);
+ //---
+}
+ 
 //+------------------------------------------------------------------+
 //| Проверяет текущую цену как реальный TP, SL, protected SL
 //+------------------------------------------------------------------+
@@ -442,6 +507,19 @@ bool checkCurrentPrice(double ask, double bid)
                   priceToStr(op),
                   priceToStr(sl),
                   priceToStr(tp));
+                  
+      
+      // 2. Проверяем SL
+      // 2.1. наличие защитного SL, если защитный SL уже установлен, то этот SL никогда не убираем
+      // 2.2. что цена в зоне реального SL, закрывем позицию
+      
+      // 1. Проверяем что цена в зоне реального TP и закрывем сделку принудительно
+      if ((type == POSITION_TYPE_BUY && ask > (tp - param_real_dist_stop) ) ||
+          (type == POSITION_TYPE_SELL && bid < (tp + param_real_dist_stop)))
+      {
+        closeOrder(type, position_ticket);
+      }
+      
 
       if (type == POSITION_TYPE_BUY)
       {        
