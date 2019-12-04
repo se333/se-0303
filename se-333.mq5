@@ -9,8 +9,6 @@
 //+------------------------------------------------------------------+
 #define DEF_CHART_ID               0 // default chart identifier(0 - main chart window)
 #define DEF_SYMBOL                 Symbol()
-#define DEF_TIMEFRAME              PERIOD_H1
-#define DEF_TREND_MAX_HOURS_AGO    48
 
 #define DEF_EXPERT_MAGIC           333 // MagicNumber of the expert
 #define DEF_WAIT_OPEN_DEAL_TIME    3 // время в секундах, которое ожидаем открытие позиции
@@ -18,35 +16,36 @@
 /**/#define DEF_SHOW_EXPERT_STATUS
 #define DEF_SHOW_DEBUG_STATUS/**/
 
-#define DEF_DEBUG_ORDER // эта отладка для открытия позиций
+#define DEF_DEBUG_FORCE_OPEN_DEAL // эта отладка для принудительного открытия позиций
 
-#ifdef DEF_DEBUG_ORDER
-static bool need_open_order = true;
+#ifdef DEF_DEBUG_FORCE_OPEN_DEAL
+static bool need_open_deal = true;
 #endif
 
 //+------------------------------------------------------------------+
 //| Входные параметры
 //+------------------------------------------------------------------+
-input double real_balance = 133.0; // баланс
-input int cur_attemp      = 1;     // номер текущей попытки выиграть (5..1)
+input double input_real_balance = 133.0; // баланс
+input int input_cur_attemp      = 1;     // номер текущей попытки выиграть (5..1)
 
 //+------------------------------------------------------------------+
 //| Коэффициенты 
 //+------------------------------------------------------------------+
-input double k_protected_sl = 0.70; // коэф. защитного SL, который устанавливается если сделка перешла в профит // TODO: реализовать
+input double input_k_protected_sl = 0.70; // коэф. защитного SL, который устанавливается если сделка перешла в профит
 
 //+------------------------------------------------------------------+
 //| Константы
 //+------------------------------------------------------------------+
-double real_dist_stop  = 0.0030; // расстояние от установленного TP до реальных стопов(SL/TP)
+const double param_real_dist_stop  = 0.0030; // расстояние от установленного TP до реальных стопов(SL/TP)
+const double param_djitter         = 0.0003; // джитер при котором не изменяются SL/TP
 
 //+------------------------------------------------------------------+
 //| Enums
 //+------------------------------------------------------------------+
 enum ExpertStatusEnum
 {
-  ESE_DealGuard,
-  ESE_WaitOpenDeal
+  ESE_DealGuard, // сделка открыта и советник в режиме охраны
+  ESE_WaitOpenDeal // ожидает открытия сделки
 };
 
 enum OrderDirectionEnum
@@ -81,21 +80,9 @@ const string label_trend = "labelTrend";
 //| Static parameters
 //+------------------------------------------------------------------+
 
-double trend_dimension, trend_high, trend_low; // размер, а также максимальное и минимальное значение цены за время тренда
-
-double risk_money = 0.0;
-uint cnt_last_loss = 0;
 ulong order_ticket = 0;
 
-OrderDirectionEnum hour_od = OD_Unknown; // часовое направление для открытия ордера
-
 ExpertStatusEnum expert_status = ESE_WaitOpenDeal; // статус эксперта
-
-int handle_alligator = 0; // дескриптор для индикатора Alligator
-double price_lips = 0.0; // цена губы Аллигатора
-datetime saved_time; // время текущего часа
-
-bool safing_sl_check = true; // флаг необходимости проверки установки защитного SL
 
 #ifdef DEF_SHOW_DEBUG_STATUS
 string text_debug_status;
@@ -142,8 +129,8 @@ void setLabelText(long chart_id, string name, string text)
 void showExpertStatus(ExpertStatusEnum status, string text)
 {
   setLabelText(DEF_CHART_ID, label_status, "Balance: " +
-    moneyToStr(real_balance) + " [" +    
-    IntegerToString(cur_attemp) + " / " + 
+    moneyToStr(input_real_balance) + " [" +    
+    IntegerToString(input_cur_attemp) + " / " + 
     moneyToStr(calcFirstDepositRisk()) + "] " +
     IntegerToString(status, 2, '0') + " " + text);
 }
@@ -265,7 +252,7 @@ bool getCurrentHour(datetime &dt)
 {
   datetime time_array[1];
 
-  if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
+  if (1 != CopyTime(DEF_SYMBOL, PERIOD_H1, 0, 1, time_array))
   {
     PRINT_LOG(LOG_Error, "can`t get currunt hour array " + TimeToString(time_array[0]) +
       " Err:" + IntegerToString(GetLastError()));
@@ -424,11 +411,10 @@ bool movePositionSLTP(ulong position_ticket, double tp, double sl)
 }
 
 //+------------------------------------------------------------------+
-//| Проверяет возможность установки защитного SL
+//| Проверяет текущую цену как реальный TP, SL, protected SL
 //+------------------------------------------------------------------+
-bool checkAndSetSafingSL(double ask, double bid)
+bool checkCurrentPrice(double ask, double bid)
 {
-#ifdef DEF__
    ulong  position_ticket; // тикет позиции
    double sl, tp, op, dimension;
    int i, total = PositionsTotal(); // количество открытых позиций
@@ -459,42 +445,38 @@ bool checkAndSetSafingSL(double ask, double bid)
 
       if (type == POSITION_TYPE_BUY)
       {        
-        dimension = (tp - op) * k_safing_sl;
+        dimension = (tp - op) * input_k_protected_sl;
         
         if (bid >= op + dimension) // если цена близка к TP
         {          
-          if (sl < op + DEF_OPEN_DJITTER) // если защитный SL еще не установлен
+          if (sl < op + param_djitter) // если защитный SL еще не установлен
           {
             // Вычисляем новый SL
-            sl = op + DEF_OPEN_DJITTER;
+            sl = op + param_djitter;
             
             // Сдвигаем защитный SL
             movePositionSLTP(position_ticket, tp, sl);
           }
-          
-          safing_sl_check = false; // TODO: неверная обработка при кол-ве позиций более одной
         }
         
       } else { /* POSITION_TYPE_SELL */
 
-        dimension = (op - tp) * k_safing_sl;
+        dimension = (op - tp) * input_k_protected_sl;
         
         if (ask <= op - dimension) // если цена близка к TP
         {          
-          if (sl > op - DEF_OPEN_DJITTER) // если защитный SL еще не установлен
+          if (sl > op - param_djitter) // если защитный SL еще не установлен
           {
             // Вычисляем новый SL
-            sl = op - DEF_OPEN_DJITTER;
+            sl = op - param_djitter;
             
             // Сдвигаем защитный SL
             movePositionSLTP(position_ticket, tp, sl);
           }
-          
-          safing_sl_check = false;  // TODO: неверная обработка при кол-ве позиций более одной
         }
       }
    }
-#endif   
+
    return true; // TODO: неверная обработка при кол-ве позиций более одной
 }
 
@@ -505,7 +487,7 @@ bool checkAndSetSafingSL(double ask, double bid)
 double calcFirstDepositRisk()
 {
   /*return AccountInfoDouble(ACCOUNT_BALANCE) / MathPow(2, loss_consecutive);*/
-  return real_balance / MathPow(2, cur_attemp);
+  return input_real_balance / MathPow(2, input_cur_attemp);
 }
 
 
@@ -514,12 +496,13 @@ double calcFirstDepositRisk()
 //+------------------------------------------------------------------+
 int OnInit()
 {
-
 #ifdef DEF_SHOW_DEBUG_STATUS
   CreateLabel(DEF_CHART_ID, label_status, "Balance: ", 0, 5, 20, clrYellow);
   CreateLabel(DEF_CHART_ID, label_trend, "INFO:", 0, 5, 40, clrYellow);
 #endif
 
+  setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
+  
   /* handle_alligator = iAlligator(DEF_SYMBOL, DEF_TIMEFRAME, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN); */
 
 //--- create timer
@@ -538,36 +521,36 @@ void OnDeinit(const int reason)
    EventKillTimer();
 }
 
-/*#ifdef DEF_DEBUG_FIXED_TP
-   double profit = 100.0;
-   if (order_type == ORDER_TYPE_BUY)
-     request.volume    = moneyToLots(profit / (tp - price));
-   else
-     request.volume    = moneyToLots(profit / (price - tp));
-#else
-   request.volume    = volume;            // volume of N lot
-#endif*/
-
 //+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
+  // Если есть установленная позиция
+  if (PositionSelect(DEF_SYMBOL))
+  {
+    double ask, bid;
+        
+    getCurrentPrice(ask, bid);    
+    checkCurrentPrice(ask, bid);
+        
+    return;
+  }
   
-#ifdef DEF_DEBUG_ORDER
-  if (need_open_order)
+#ifdef DEF_DEBUG_FORCE_OPEN_DEAL
+  if (need_open_deal)
   {
 
-    OrderDirectionEnum cur_od = hour_od;
+    OrderDirectionEnum cur_od;
     double ask, bid, tp, sl;
   
     tp = 0.0;
     sl = 0.0;
     
     // Получаем текущую цену
-    getCurrentPrice(ask, bid);    
-    cur_od = OD_Sell; /* OD_Buy; */
+    getCurrentPrice(ask, bid);
+    cur_od = OD_Buy; tp = 1.1498; sl = 0.0;
+    /* cur_od = OD_Sell; tp = 1.1420; sl = 0.0; */
     /* dimension = OD_Buy == cur_od ? tp - ask : bid - tp; */
 
     // Отправляем ордер
@@ -577,8 +560,10 @@ void OnTick()
     // 13. Ожидаем открытия позиции
     setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
     EventSetTimer(DEF_WAIT_OPEN_DEAL_TIME); // запускаем таймер, на случай если сервер не открыл позицию
-    need_open_order = false;
+    need_open_deal = false;
   }
+#endif
+
 }
 
 //+------------------------------------------------------------------+
@@ -586,16 +571,16 @@ void OnTick()
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+#ifdef DEF_DEBUG_FORCE_OPEN_DEAL
   if (expert_status == ESE_WaitOpenDeal)
   {
-    // По какой-то причине сервер не открыл позицию, повторяем попытку открытия ордера
-    PRINT_LOG(LOG_Error, "Can not open DEAL, timer expired");
-    need_open_order = true;
+    // По какой-то причине сервер не открыл позицию, повторяем попытку открытия сделки
+    PRINT_LOG(LOG_Error, "Can`t open DEAL, timer expired");
+    need_open_deal = true;
     
-    setExpertStatus(ESE_WaitOpenDeal); // начинаем сканирование цен
-
     EventKillTimer(); // останавливаем таймер
   }
+#endif
 }
 
 //+------------------------------------------------------------------+
@@ -612,6 +597,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
                         const MqlTradeResult& result)
 {
+#ifdef DEF_DEBUG_FORCE_OPEN_DEAL
   switch(trans.type)
   {
     case TRADE_TRANSACTION_HISTORY_ADD:
@@ -625,16 +611,12 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
         order_ticket = 0;
         setExpertStatus(ESE_DealGuard);
         
-#ifdef DEF__        
-        if (k_safing_sl > 0.0) // проверяем что нужно ставить защитный SL
-          safing_sl_check = true; // разрешаем проверку и установку защитного SL
-#endif
-
         EventKillTimer(); // останавливаем таймер проверки открытия позиции
       }
     } break;
     default: {}
   }
+#endif
 }
 
 //+------------------------------------------------------------------+
@@ -675,6 +657,7 @@ void OnChartEvent(const int id,
                   const double &dparam,
                   const string &sparam)
 {
+
 }
 //+------------------------------------------------------------------+
 
