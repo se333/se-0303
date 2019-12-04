@@ -8,7 +8,7 @@
 //| Defines
 //+------------------------------------------------------------------+
 #define DEF_CHART_ID               0 // default chart identifier(0 - main chart window)
-#define DEF_SYMBOL                 "EURUSD"
+#define DEF_SYMBOL                 Symbol()
 #define DEF_TIMEFRAME              PERIOD_H1
 #define DEF_TREND_MAX_HOURS_AGO    48
 
@@ -18,13 +18,17 @@
 /**/#define DEF_SHOW_EXPERT_STATUS
 #define DEF_SHOW_DEBUG_STATUS/**/
 
-/* #define DEF_DEBUG_FIXED_TP */         // эта отладка для открытия позиций с одинаковыми TP 10.0
+#define DEF_DEBUG_ORDER // эта отладка для открытия позиций
+
+#ifdef DEF_DEBUG_ORDER
+static bool need_open_order = true;
+#endif
 
 //+------------------------------------------------------------------+
 //| Входные параметры
 //+------------------------------------------------------------------+
 input double real_balance = 133.0; // баланс
-input int cur_attemp      = 5;     // номер текущей попытки выиграть (5..1)
+input int cur_attemp      = 1;     // номер текущей попытки выиграть (5..1)
 
 //+------------------------------------------------------------------+
 //| Коэффициенты 
@@ -140,7 +144,7 @@ void showExpertStatus(ExpertStatusEnum status, string text)
   setLabelText(DEF_CHART_ID, label_status, "Balance: " +
     moneyToStr(real_balance) + " [" +    
     IntegerToString(cur_attemp) + " / " + 
-    moneyToStr(calcFirstDepositRisk())+
+    moneyToStr(calcFirstDepositRisk()) + "] " +
     IntegerToString(status, 2, '0') + " " + text);
 }
 #endif
@@ -263,8 +267,8 @@ bool getCurrentHour(datetime &dt)
 
   if (1 != CopyTime(DEF_SYMBOL, DEF_TIMEFRAME, 0, 1, time_array))
   {
-    PRINT_LOG(LOG_Error, "can not get currunt hour array " + TimeToString(time_array[0]) + " Err:" +
-      IntegerToString(GetLastError()));
+    PRINT_LOG(LOG_Error, "can`t get currunt hour array " + TimeToString(time_array[0]) +
+      " Err:" + IntegerToString(GetLastError()));
      return false;
   }
 
@@ -275,13 +279,23 @@ bool getCurrentHour(datetime &dt)
 //+-----------------------------------------------------------------+
 //| Возвращает текущую цену
 //+-----------------------------------------------------------------+
-void getCurrentPrice(double &ask, double &bid)
+bool getCurrentPrice(double &ask, double &bid)
 {
-   MqlTick last_tick = {0};
-   SymbolInfoTick(DEF_SYMBOL, last_tick);
-
-   ask = last_tick.ask;
-   bid = last_tick.bid;
+  MqlTick last_tick = {0};
+   
+  if (SymbolInfoTick(DEF_SYMBOL, last_tick))
+  {
+    ask = last_tick.ask;
+    bid = last_tick.bid;
+      
+    return true;
+  } else
+    ask = bid = 0.0;
+    
+    PRINT_LOG(LOG_Error, "can`t get currunt price." +
+      " Err:" + IntegerToString(GetLastError()));
+   
+  return false;
 }
 
 //+-----------------------------------------------------------------+
@@ -339,11 +353,13 @@ bool openOrder(ENUM_ORDER_TYPE order_type,
    //--- declare and initialize the trade request and result of trade request
    MqlTradeRequest request={0};
    MqlTradeResult  result={0};
-
+   MqlTradeCheckResult resultCheck={0};
+   
    //--- parameters of request
    request.action    = TRADE_ACTION_DEAL; // type of trade operation
    request.symbol    = DEF_SYMBOL;        // symbol
    request.type      = order_type;        // order type
+   request.volume    = volume;            // volume
    request.price     = price;             // price for opening
    request.tp        = tp;
    request.sl        = sl;
@@ -351,27 +367,19 @@ bool openOrder(ENUM_ORDER_TYPE order_type,
    request.magic     = DEF_EXPERT_MAGIC;  // MagicNumber of the order
    request.type_filling = ORDER_FILLING_FOK;
 
-#ifdef DEF_DEBUG_FIXED_TP
-   double profit = 100.0;
-   if (order_type == ORDER_TYPE_BUY)
-     request.volume    = moneyToLots(profit / (tp - price));
-   else
-     request.volume    = moneyToLots(profit / (price - tp));
-#else
-   request.volume    = volume;            // volume of N lot
-#endif
-
   //--- send the request
-  if (OrderSend(request, result))
+  if (OrderCheck(request, resultCheck))
   {
-    if (result.retcode == TRADE_RETCODE_DONE ||
-        result.retcode == TRADE_RETCODE_PLACED)
-    {
-      if (result.order > 0)
+    if (OrderSend(request, result)) {
+      if (result.retcode == TRADE_RETCODE_DONE ||
+          result.retcode == TRADE_RETCODE_PLACED)
       {
-        order_ticket = result.order;
-        Print(__FUNCTION__," Order sent in sync mode");
-        return (true);
+        if (result.order > 0)
+        {
+          order_ticket = result.order;
+          Print(__FUNCTION__," Order sent in sync mode");
+          return (true);
+        }
       }
     }
   }
@@ -508,7 +516,7 @@ int OnInit()
 {
 
 #ifdef DEF_SHOW_DEBUG_STATUS
-  CreateLabel(DEF_CHART_ID, label_status, "STATUS:", 0, 5, 20, clrYellow);
+  CreateLabel(DEF_CHART_ID, label_status, "Balance: ", 0, 5, 20, clrYellow);
   CreateLabel(DEF_CHART_ID, label_trend, "INFO:", 0, 5, 40, clrYellow);
 #endif
 
@@ -530,6 +538,15 @@ void OnDeinit(const int reason)
    EventKillTimer();
 }
 
+/*#ifdef DEF_DEBUG_FIXED_TP
+   double profit = 100.0;
+   if (order_type == ORDER_TYPE_BUY)
+     request.volume    = moneyToLots(profit / (tp - price));
+   else
+     request.volume    = moneyToLots(profit / (price - tp));
+#else
+   request.volume    = volume;            // volume of N lot
+#endif*/
 
 //+------------------------------------------------------------------+
 //| Expert tick function                                             |
@@ -538,112 +555,30 @@ void OnTick()
 {
    setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
   
-#ifdef DEF__
-
-datetime cur_time;
-  
-  // 0. Выходим если состояние проверки установки позиции
-  if (expert_status >= ES_WaitOpenDeal)
-    return;
-
-  // 1. Если есть установленная позиция, то проверяем необходимость установки защитного SL
-  if (PositionSelect(DEF_SYMBOL))
+#ifdef DEF_DEBUG_ORDER
+  if (need_open_order)
   {
-    if (safing_sl_check)
-    {
-      double ask, bid;
 
-      // Получаем текущую цену
-      getCurrentPrice(ask, bid);
-      
-      checkAndSetSafingSL(ask, bid);
-    }
-    
-    return;
-  }
-
-  // 2. Проверяем новый час или начало торговли
-  if (getCurrentHour(cur_time) && cur_time != saved_time) // если новый час
-  {
-    datetime time_last_loss;
-    int loss_skip_hours; // кол-во часов которое нужно подождать до следующего выхода на рынок после поражения
-
-    hour_od = OD_Unknown; // сбрасываем часовое направление ордера
-    saved_time = cur_time; // запоминаем время нового бара
-
-    // 3. Проверяем что уже можно выходить на рынок если прошлый раз было поражения
-    cnt_last_loss = getCountConsecutiveLossDeal(time_last_loss, risk_money);
-    if (cnt_last_loss)
-    {
-      loss_skip_hours = calcLossSkipHours(cnt_last_loss);
-
-      if (cur_time < time_last_loss + loss_skip_hours * 60 *60)
-      {
-#ifdef DEF_SHOW_EXPERT_STATUS
-        setLabelText(DEF_CHART_ID, label_trend, "Wait " +
-          TimeToString(time_last_loss, TIME_DATE) +
-          " after " +
-          IntegerToString(cnt_last_loss) + " LOSS [" +
-          IntegerToString(loss_skip_hours) + "]");
-#endif
-        return;
-      }
-    } else {
-      risk_money = calcFirstDepositRisk();
-    }
-
-    // 4. Вычисляем новый размер тренда
-    calcTrendDimension(trend_dimension, trend_high, trend_low);
-
-#ifdef DEF_SHOW_EXPERT_STATUS
-    setLabelText(DEF_CHART_ID, label_trend, "TREND[" +
-      IntegerToString(trend_hours_ago) + "]: " +
-      priceToStr(trend_min_dimension) + "/" +
-      priceToStr(trend_max_dimension) + " - " +
-      priceToStr(trend_dimension));
-#endif
-
-    // 5. Проверяем что размер тренда в установленном диапазоне
-    if (checkValidTrendDimension())
-    {
-      // 6. Проверяем что Аллигатор с открытым ртом
-      hour_od = checkAlligatorOpenMouth(price_lips);
-    }
-  }
-
-  // 7. Если часовые параметры в норме
-  if (OD_Unknown != hour_od)
-  {
     OrderDirectionEnum cur_od = hour_od;
-    double ask, bid, tp, sl, dimension;
+    double ask, bid, tp, sl;
+  
+    tp = 0.0;
+    sl = 0.0;
+    
+    // Получаем текущую цену
+    getCurrentPrice(ask, bid);    
+    cur_od = OD_Sell; /* OD_Buy; */
+    /* dimension = OD_Buy == cur_od ? tp - ask : bid - tp; */
 
-   // 8. Получаем текущую цену
-   getCurrentPrice(ask, bid);
+    // Отправляем ордер
+    openOrder(OD_Buy == cur_od ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
+        0.1, OD_Buy == cur_od ? ask : bid, tp, sl);
 
-   // 9. Проверяем что текущая цена возле губы Аллигатора
-   cur_od = checkAlligatorLips(cur_od, ask, bid, price_lips);
-
-    if (OD_Unknown != cur_od)
-    {
-      // 10. Проверяем что отскок еще не завершен
-      cur_od = checkRebound(cur_od, ask, bid, tp, sl);
-
-      // 11. Если можно открывать ордер
-      if (OD_Unknown != cur_od)
-      {
-        dimension = OD_Buy == cur_od ? tp - ask : bid - tp;
-
-        // 12. Отправляем ордер
-        openOrder(OD_Buy == cur_od ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-            moneyToLots(risk_money / dimension), OD_Buy == cur_od ? ask : bid, tp, sl);
-
-        // 13. Ожидаем открытия позиции
-        setExpertStatus(ES_WaitOpenDeal); // ожидаем появления позиции
-        EventSetTimer(DEF_WAIT_OPEN_DEAL_TIME); // запускаем таймер, на случай если сервер не открыл позицию
-      }
-    }
+    // 13. Ожидаем открытия позиции
+    setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
+    EventSetTimer(DEF_WAIT_OPEN_DEAL_TIME); // запускаем таймер, на случай если сервер не открыл позицию
+    need_open_order = false;
   }
-#endif
 }
 
 //+------------------------------------------------------------------+
@@ -651,17 +586,16 @@ datetime cur_time;
 //+------------------------------------------------------------------+
 void OnTimer()
 {
-#ifdef DEF__
   if (expert_status == ESE_WaitOpenDeal)
   {
     // По какой-то причине сервер не открыл позицию, повторяем попытку открытия ордера
     PRINT_LOG(LOG_Error, "Can not open DEAL, timer expired");
-
-    setExpertStatus(ES_Scan); // начинаем сканирование цен
+    need_open_order = true;
+    
+    setExpertStatus(ESE_WaitOpenDeal); // начинаем сканирование цен
 
     EventKillTimer(); // останавливаем таймер
   }
-#endif
 }
 
 //+------------------------------------------------------------------+
