@@ -10,7 +10,6 @@
 #define DEF_CHART_ID               0 // default chart identifier(0 - main chart window)
 #define DEF_SYMBOL                 Symbol()
 
-#define DEF_EXPERT_MAGIC           333 // MagicNumber of the expert
 #define DEF_WAIT_OPEN_DEAL_TIME    3 // время в секундах, которое ожидаем открытие позиции
 
 /**/#define DEF_SHOW_EXPERT_STATUS
@@ -48,20 +47,12 @@ enum ExpertStatusEnum
   ESE_WaitOpenDeal // ожидает открытия сделки
 };
 
-enum OrderDirectionEnum
-{
-  OD_Unknown,
-  OD_Buy,
-  OD_Sell
-};
-
 enum LogLevelEnum
 {
   LOG_Error,
   LOG_Warning,
   LOG_Info
 };
-
 
 const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
 
@@ -131,7 +122,7 @@ void showExpertStatus(ExpertStatusEnum status, string text)
   setLabelText(DEF_CHART_ID, label_status, "Balance: " +
     moneyToStr(input_real_balance) + " [" +    
     IntegerToString(input_cur_attemp) + " / " + 
-    moneyToStr(calcFirstDepositRisk()) + "] " +
+    moneyToStr(calcDepositRisk()) + "] " +
     IntegerToString(status, 2, '0') + " " + text);
 }
 #endif
@@ -191,11 +182,27 @@ void printLog(LogLevelEnum level_log, string text)
 }
 
 //+-----------------------------------------------------------------+
+//| Выводит результат работы
+//+-----------------------------------------------------------------+
+void printResult(const MqlTradeResult &result)
+{
+  printLog(LOG_Info, StringFormat("retcode=%u; deal=%I64u; order=%I64u", result.retcode, result.deal, result.order));   
+}
+
+//+-----------------------------------------------------------------+
+//| Проверяет что цена не установлена
+//+-----------------------------------------------------------------+
+bool isZeroPrice(double price)
+{
+  return price < 0.0001;
+}
+
+//+-----------------------------------------------------------------+
 //| Преобразовывает цену в строку
 //+-----------------------------------------------------------------+
-string priceToStr(double value)
+string priceToStr(double price)
 {
-  return DoubleToString(value, _Digits - 1);
+  return DoubleToString(price, _Digits - 1);
 }
 
 //+-----------------------------------------------------------------+
@@ -306,8 +313,7 @@ uint getCountConsecutiveLossDeal(datetime &time_last_loss, double &resote_money)
       if ((ticket = HistoryDealGetTicket(--i) ) > 0)
       {
         if (HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT && /* выход из рынка */
-            HistoryDealGetString(ticket, DEAL_SYMBOL) == DEF_SYMBOL &&
-            HistoryDealGetInteger(ticket, DEAL_MAGIC) == DEF_EXPERT_MAGIC)
+            HistoryDealGetString(ticket, DEAL_SYMBOL) == DEF_SYMBOL)
         {
           if ((profit = HistoryDealGetDouble(ticket, DEAL_PROFIT)) < 0.0)
           {
@@ -334,25 +340,23 @@ uint getCountConsecutiveLossDeal(datetime &time_last_loss, double &resote_money)
 //+------------------------------------------------------------------+
 //| Открывает ордер
 //+------------------------------------------------------------------+
-bool openOrder(ENUM_ORDER_TYPE order_type,
-  double volume, double price, double tp, double sl)
+bool openPosition(ENUM_POSITION_TYPE type, double volume, double ask, double bid, double tp, double sl)
 {
-   //--- declare and initialize the trade request and result of trade request
-   MqlTradeRequest request={0};
-   MqlTradeResult  result={0};
-   MqlTradeCheckResult resultCheck={0};
+  //--- declare and initialize the trade request and result of trade request
+  MqlTradeRequest request={0};
+  MqlTradeResult  result={0};
+  MqlTradeCheckResult resultCheck={0};
    
-   //--- parameters of request
-   request.action    = TRADE_ACTION_DEAL; // type of trade operation
-   request.symbol    = DEF_SYMBOL;        // symbol
-   request.type      = order_type;        // order type
-   request.volume    = volume;            // volume
-   request.price     = price;             // price for opening
-   request.tp        = tp;
-   request.sl        = sl;
-   request.deviation = 5;                 // allowed deviation from the price
-   request.magic     = DEF_EXPERT_MAGIC;  // MagicNumber of the order
-   request.type_filling = ORDER_FILLING_FOK;
+  //--- parameters of request
+  request.action    = TRADE_ACTION_DEAL; // type of trade operation
+  request.symbol    = DEF_SYMBOL;        // symbol
+  request.type      = type == POSITION_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL; // order type
+  request.volume    = volume;            // volume
+  request.price     = type == POSITION_TYPE_BUY ? ask : bid; // price for opening
+  request.tp        = tp;
+  request.sl        = sl;
+  request.deviation = 5;                 // allowed deviation from the price  
+  request.type_filling = ORDER_FILLING_FOK;
 
   //--- send the request
   if (OrderCheck(request, resultCheck))
@@ -365,7 +369,7 @@ bool openOrder(ENUM_ORDER_TYPE order_type,
         {
           order_ticket = result.order;
           Print(__FUNCTION__," Order sent in sync mode");
-          return (true);
+          return true;
         }
       }
     }
@@ -373,29 +377,25 @@ bool openOrder(ENUM_ORDER_TYPE order_type,
 
   order_ticket = 0;
 
-#ifdef DEF_SHOW_DEBUG_STATUS
-  //--- information about the operation
-  PrintFormat("Error %d openOrder: retcode=%u  deal=%I64u  order=%I64u", GetLastError(), result.retcode, result.deal, result.order);
-#endif
+  printResult(result);
 
-   return TRADE_RETCODE_DONE == result.retcode; // request completed
+  return TRADE_RETCODE_DONE == result.retcode; // request completed
 }
 
 //+------------------------------------------------------------------+
 //| Сдвигает SL и/или TP у откытой позиции
 //+------------------------------------------------------------------+
-bool movePositionSLTP(ulong position_ticket, double tp, double sl)
+bool movePositionSLTP(ulong ticket, double tp, double sl)
 {
    MqlTradeRequest request;
    MqlTradeResult  result;
    
    //--- установка параметров операции
    request.action   = TRADE_ACTION_SLTP; // тип торговой операции
-   request.position = position_ticket;   // тикет позиции
+   request.position = ticket;   // тикет позиции
    request.symbol   = DEF_SYMBOL;        // символ 
    request.sl       = sl;                // Stop Loss позиции
-   request.tp       = tp;                // Take Profit позиции
-   request.magic    = DEF_EXPERT_MAGIC;  // MagicNumber позиции
+   request.tp       = tp;                // Take Profit позиции   
    
    // отправка запроса
    if (!OrderSend(request, result))
@@ -404,170 +404,133 @@ bool movePositionSLTP(ulong position_ticket, double tp, double sl)
      return false;
    }
    
-   // информация об операции   
-   PrintFormat("%s retcode=%u  deal=%I64u  order=%I64u", __FUNCTION__, result.retcode, result.deal, result.order);
+   printResult(result);
    
    return TRADE_RETCODE_DONE == result.retcode;
 }
 
 //+------------------------------------------------------------------+
-//| Удаляет ордер
+//| закрывает позицию указанного обьема
 //+------------------------------------------------------------------+
-bool closeOrder(ulong position_ticket)
+bool closePosition(ENUM_POSITION_TYPE type, ulong ticket, double volume, double ask, double bid)
 {
   MqlTradeResult result={0};
   MqlTradeRequest request={0};
 
   request.action = TRADE_ACTION_DEAL;
-  request.position = position_ticket;
+  request.position = ticket;
   request.symbol = DEF_SYMBOL;
-  /* request.volume = volume; */
+  request.volume = volume;
   request.deviation = 5; // допустимое отклонение от цены
   /* request.magic =EXPERT_MAGIC; */
  
- if(type==POSITION_TYPE_BUY)
- {
-  request.price=SymbolInfoDouble(DEF_SYMBOL, SYMBOL_BID);
- request.type =ORDER_TYPE_SELL;
+  if(POSITION_TYPE_BUY == type)
+  {
+    request.price = bid;
+    request.type = ORDER_TYPE_SELL;
+  } else {
+    request.price = ask;
+    request.type = ORDER_TYPE_BUY;
+  }
   
   // отправка запроса
   if (!OrderSend(request, result))
   {
-     PrintFormat("OrderSend error %d",GetLastError());  // если отправить запрос не удалось, вывести код ошибки
-     return false;
-   }
-   
-   // информация об операции   
-   PrintFormat("%s retcode=%u  deal=%I64u  order=%I64u", __FUNCTION__, result.retcode, result.deal, result.order);
-   
-   return TRADE_RETCODE_DONE == result.retcode;
-   
-   
-   
-   
-   
-
- //--- установка параметров операции
- request.action =TRADE_ACTION_DEAL; // тип торговой операции
- request.position =position_ticket; // тикет позиции
- request.symbol =position_symbol; // символ
- request.volume =volume; // объем позиции
- request.deviation=5; // допустимое отклонение от цены
- request.magic =EXPERT_MAGIC; // MagicNumber позиции
- //--- установка цены и типа ордера в зависимости от типа позиции
- if(type==POSITION_TYPE_BUY)
- {
- request.price=SymbolInfoDouble(position_symbol,SYMBOL_BID);
- request.type =ORDER_TYPE_SELL;
- }
- else
- {
- request.price=SymbolInfoDouble(position_symbol,SYMBOL_ASK);
- request.type =ORDER_TYPE_BUY;
- }
- //--- вывод информации о закрытии
- PrintFormat("Close #%I64d %s %s",position_ticket,position_symbol,EnumToString(type));
- //--- отправка запроса
- if(!OrderSend(request,result))
- PrintFormat("OrderSend error %d",GetLastError()); // если отправить запрос не удалось, вывести код ошибки
- //--- информация об операции
- PrintFormat("retcode=%u deal=%I64u order=%I64u",result.retcode,result.deal,result.order);
- //---
+    PrintFormat("OrderSend error %d",GetLastError());  // если отправить запрос не удалось, вывести код ошибки
+    return false;
+  }
+  
+  printResult(result);
+     
+  return TRADE_RETCODE_DONE == result.retcode;   
 }
- 
+
 //+------------------------------------------------------------------+
-//| Проверяет текущую цену как реальный TP, SL, protected SL
+//| Проверяет текущую цену для реальный TP, SL, protected SL
 //+------------------------------------------------------------------+
-bool checkCurrentPrice(double ask, double bid)
+void checkCurrentPrice(double ask, double bid)
 {
-   ulong  position_ticket; // тикет позиции
-   double sl, tp, op, dimension;
+   ulong  ticket; // тикет позиции
+   double sl, tp, po, dimension, volume;
+   ENUM_POSITION_TYPE type;
    int i, total = PositionsTotal(); // количество открытых позиций
    
-   //--- перебор всех открытых позиций
+   // Перебор всех открытых позиций
    for (i = 0; i < total; i++)
    {      
-      position_ticket = PositionGetTicket(i);// тикет позиции
+      ticket = PositionGetTicket(i);// тикет позиции
       
       sl = PositionGetDouble(POSITION_SL);  // Stop Loss позиции
       tp = PositionGetDouble(POSITION_TP);  // Take Profit позиции
-      op = PositionGetDouble(POSITION_PRICE_OPEN);
-      
-      ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);  // тип позиции
-      
+      po = PositionGetDouble(POSITION_PRICE_OPEN);      
+      type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);  // тип позиции
+      volume = PositionGetDouble(POSITION_VOLUME); // объем позиции
       /*string position_symbol=PositionGetString(POSITION_SYMBOL); // символ 
       int    digits=(int)SymbolInfoInteger(position_symbol,SYMBOL_DIGITS); // количество знаков после запятой
-      ulong  magic=PositionGetInteger(POSITION_MAGIC); // MagicNumber позиции
-      double volume=PositionGetDouble(POSITION_VOLUME);    // объем позиции*/
-      
+      ulong  magic=PositionGetInteger(POSITION_MAGIC); // MagicNumber позиции */
+            
       //--- вывод информации о позиции
-      PrintFormat("#%I64u %s  open: %s  sl: %s  tp: %s",
-                  position_ticket,                  
-                  EnumToString(type),
-                  priceToStr(op),
-                  priceToStr(sl),
-                  priceToStr(tp));
-                  
+      /* PrintFormat("#%I64u %s  open: %s  sl: %s  tp: %s",
+                  ticket, EnumToString(type), priceToStr(po), priceToStr(sl), priceToStr(tp)); */
+
+      // 1. Обрабатывем позицию если установлен TP
+      if (isZeroPrice(tp))
+        continue;
       
-      // 2. Проверяем SL
-      // 2.1. наличие защитного SL, если защитный SL уже установлен, то этот SL никогда не убираем
-      // 2.2. что цена в зоне реального SL, закрывем позицию
-      
-      // 1. Проверяем что цена в зоне реального TP и закрывем сделку принудительно
-      if ((type == POSITION_TYPE_BUY && ask > (tp - param_real_dist_stop) ) ||
-          (type == POSITION_TYPE_SELL && bid < (tp + param_real_dist_stop)))
+      // 2. Проверяем что цена в зоне реального TP/SL и закрывем всю позицию принудительно
+      if ((POSITION_TYPE_BUY == type && (ask > (tp - param_real_dist_stop) || (ask < po - (tp - po) - param_real_dist_stop))) ||
+          (POSITION_TYPE_SELL == type && (bid < (tp + param_real_dist_stop) || (bid > po + (po - tp) - param_real_dist_stop))))
       {
-        closeOrder(type, position_ticket);
+        closePosition(type, ticket, volume, ask, bid);
+        continue;
       }
       
-
-      if (type == POSITION_TYPE_BUY)
+      // 3. Проверяем наличие защитного SL, если защитный SL уже установлен, то его никогда не убираем      
+      if (POSITION_TYPE_BUY == type)
       {        
-        dimension = (tp - op) * input_k_protected_sl;
+        dimension = (tp - po) * input_k_protected_sl;
         
-        if (bid >= op + dimension) // если цена близка к TP
+        if (bid >= po + dimension) // если цена близка к TP
         {          
-          if (sl < op + param_djitter) // если защитный SL еще не установлен
+          if (sl < po + param_djitter) // если защитный SL еще не установлен
           {
             // Вычисляем новый SL
-            sl = op + param_djitter;
+            sl = po + param_djitter;
             
             // Сдвигаем защитный SL
-            movePositionSLTP(position_ticket, tp, sl);
+            movePositionSLTP(ticket, tp, sl);
+            continue;
           }
         }
         
       } else { /* POSITION_TYPE_SELL */
 
-        dimension = (op - tp) * input_k_protected_sl;
+        dimension = (po - tp) * input_k_protected_sl;
         
-        if (ask <= op - dimension) // если цена близка к TP
+        if (ask <= po - dimension) // если цена близка к TP
         {          
-          if (sl > op - param_djitter) // если защитный SL еще не установлен
+          if (sl > po - param_djitter) // если защитный SL еще не установлен
           {
             // Вычисляем новый SL
-            sl = op - param_djitter;
+            sl = po - param_djitter;
             
             // Сдвигаем защитный SL
-            movePositionSLTP(position_ticket, tp, sl);
+            movePositionSLTP(ticket, tp, sl);
+            continue;
           }
         }
       }
    }
-
-   return true; // TODO: неверная обработка при кол-ве позиций более одной
 }
 
-
 //+------------------------------------------------------------------+
-//| Вычисляем сумму депозита которым можно рискнуть в первом ордере
+//| Вычисляем сумму депозита, которым можно рискнуть
 //+------------------------------------------------------------------+
-double calcFirstDepositRisk()
+double calcDepositRisk()
 {
-  /*return AccountInfoDouble(ACCOUNT_BALANCE) / MathPow(2, loss_consecutive);*/
+  /* return AccountInfoDouble(ACCOUNT_BALANCE) / MathPow(2, loss_consecutive); */
   return input_real_balance / MathPow(2, input_cur_attemp);
 }
-
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -619,7 +582,7 @@ void OnTick()
   if (need_open_deal)
   {
 
-    OrderDirectionEnum cur_od;
+    ENUM_POSITION_TYPE type;
     double ask, bid, tp, sl;
   
     tp = 0.0;
@@ -627,13 +590,11 @@ void OnTick()
     
     // Получаем текущую цену
     getCurrentPrice(ask, bid);
-    cur_od = OD_Buy; tp = 1.1498; sl = 0.0;
-    /* cur_od = OD_Sell; tp = 1.1420; sl = 0.0; */
-    /* dimension = OD_Buy == cur_od ? tp - ask : bid - tp; */
-
-    // Отправляем ордер
-    openOrder(OD_Buy == cur_od ? ORDER_TYPE_BUY : ORDER_TYPE_SELL,
-        0.1, OD_Buy == cur_od ? ask : bid, tp, sl);
+    type = POSITION_TYPE_BUY; tp = 1.1498; sl = 0.0;    
+    /* type = POSITION_TYPE_SELL; tp = 1.1420; sl = 0.0; */
+    
+    // Открываем позицию
+    openPosition(type, 0.1, ask, bid, tp, sl);
 
     // 13. Ожидаем открытия позиции
     setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
@@ -683,7 +644,6 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       if (order_ticket > 0 && trans.order == order_ticket && expert_status == ESE_WaitOpenDeal)
       {
         // Вот здесь и смотрим что произошло
-
         SET_DEBUG_STATUS("Order open successfull");
 
         order_ticket = 0;
