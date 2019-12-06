@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                                                      se-333.mq5 |
+//|                                                      se-333.mq5  |
 //|                                                    Sergey Bodnya |
 //|                                                    se333@ukr.net |
 //+------------------------------------------------------------------+
@@ -28,15 +28,9 @@ input double input_real_balance = 133.0; // баланс
 input int input_cur_attemp      = 1;     // номер текущей попытки выиграть (5..1)
 
 //+------------------------------------------------------------------+
-//| Коэффициенты 
+//| Коэффициенты
 //+------------------------------------------------------------------+
 input double input_k_protected_sl = 0.70; // коэф. защитного SL, который устанавливается если сделка перешла в профит
-
-//+------------------------------------------------------------------+
-//| Константы
-//+------------------------------------------------------------------+
-const double param_real_dist_stop  = 0.0010; // расстояние от установленного TP до реальных стопов(SL/TP)
-const double param_djitter         = 0.0003; // джитер при котором не изменяются SL/TP
 
 //+------------------------------------------------------------------+
 //| Enums
@@ -54,63 +48,120 @@ enum LogLevelEnum
   LOG_Info
 };
 
-const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
-
-void showExpertStatus(ExpertStatusEnum status, string text);
-void printLog(LogLevelEnum level_log, string text);
-
-#define PRINT_LOG(log_level, str) printLog(log_level, str)
-
 //+------------------------------------------------------------------+
 //| Constant parameters
 //+------------------------------------------------------------------+
+const double param_real_dist_stop  = 0.0010; // расстояние от установленного TP до реальных стопов(SL/TP)
+const double param_djitter         = 0.0003; // джитер при котором не изменяются SL/TP
+
 const string label_status = "labelStatus";
 const string label_trend = "labelTrend";
+
+const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
 
 //+------------------------------------------------------------------+
 //| Static parameters
 //+------------------------------------------------------------------+
-
 ulong order_ticket = 0;
-
 ExpertStatusEnum expert_status = ESE_WaitOpenDeal; // статус эксперта
 
 #ifdef DEF_SHOW_DEBUG_STATUS
 string text_debug_status;
 #endif
 
-//+------------------------------------------------------------------+
-//| Создает метку на экране
-//+------------------------------------------------------------------+
-void CreateLabel(long chart_id, string name, string text, int corner, int x, int y,
-                 color tc = CLR_NONE, int fs = 9, string fn = "Arial")
+//+-----------------------------------------------------------------+
+//| Проверяет что цена не установлена
+//+-----------------------------------------------------------------+
+bool isZeroPrice(double price)
 {
-  if (-1 == ObjectFind(chart_id, name))
-  {
-    if (ObjectCreate(chart_id, name, OBJ_LABEL, 0, 0, 0 ))
-    {
-      ObjectSetString(chart_id, name, OBJPROP_TEXT, text);
-      ObjectSetString(chart_id, name, OBJPROP_FONT, fn);
-      ObjectSetInteger(chart_id, name, OBJPROP_FONTSIZE, fs);
-      ObjectSetInteger(chart_id, name, OBJPROP_COLOR, tc);
-      ObjectSetInteger(chart_id, name, OBJPROP_CORNER, corner);
-      ObjectSetInteger(chart_id, name, OBJPROP_XDISTANCE, x);
-      ObjectSetInteger(chart_id, name, OBJPROP_YDISTANCE, y);
-      ObjectSetInteger(chart_id, name, OBJPROP_SELECTABLE, false);
-      ChartRedraw(chart_id);
-    }
-    else
-      PRINT_LOG(LOG_Error, "can not create new object");
-  } else
-    PRINT_LOG(LOG_Error, "object '" + name + "' was found");
+  return price < 0.0001;
 }
 
 //+-----------------------------------------------------------------+
-//| Устанавливает текст в метке
+//| Преобразовывает цену в строку
 //+-----------------------------------------------------------------+
-void setLabelText(long chart_id, string name, string text)
+string priceToStr(double price)
 {
-  ObjectSetString(chart_id, name, OBJPROP_TEXT, text);
+  return DoubleToString(price, _Digits - 1);
+}
+
+//+-----------------------------------------------------------------+
+//| Преобразовывает деньги в строку
+//+-----------------------------------------------------------------+
+string moneyToStr(double money)
+{
+  return "$" + DoubleToString(money, 2);
+}
+
+//+-----------------------------------------------------------------+
+//| Преобразовывает обьем в строку
+//+-----------------------------------------------------------------+
+string volumeToStr(double volume)
+{
+  return "v" + DoubleToString(volume, 2);
+}
+
+//+-----------------------------------------------------------------+
+//| Преобразовывает деньги в лоты
+//+-----------------------------------------------------------------+
+double moneyToLots(double money)
+{
+  return NormalizeDouble(money / 100000.0, 2);
+}
+
+//+-----------------------------------------------------------------+
+//| Преобразовывает лоты в деньги
+//+-----------------------------------------------------------------+
+double lotsToMoney(double lots)
+{
+  return NormalizeDouble(lots * 100000.0, 2);
+}
+
+//+-----------------------------------------------------------------+
+//| Преобразовывает номер тикета в строку
+//+-----------------------------------------------------------------+
+string ticketToStr(ulong ticket)
+{
+  return "#" + IntegerToString(ticket);
+}
+
+//+-----------------------------------------------------------------+
+//| Преобразовывает тип ордера в строку
+//+-----------------------------------------------------------------+
+string orderTypeToStr(ENUM_ORDER_TYPE order_type)
+{
+  string str;
+
+  switch (order_type)
+  {
+    case ORDER_TYPE_BUY:             { str = "BUY"; } break;
+    case ORDER_TYPE_SELL:            { str = "SELL"; } break;
+    case ORDER_TYPE_BUY_LIMIT:       { str = "BUY_LIMIT"; } break;
+    case ORDER_TYPE_SELL_LIMIT:      { str = "SELL_LIMIT"; } break;
+    case ORDER_TYPE_BUY_STOP:        { str = "BUY_STOP"; } break;
+    case ORDER_TYPE_SELL_STOP:       { str = "SELL_STOP"; } break;
+    case ORDER_TYPE_BUY_STOP_LIMIT:  { str = "BUY_STOP_LIMIT"; } break;
+    case ORDER_TYPE_SELL_STOP_LIMIT: { str = "SELL_STOP_LIMIT"; } break;
+    case ORDER_TYPE_CLOSE_BY:        { str = "CLOSE_BY"; } break;
+    default:                         { str = "INVALID ORDER TYPE"; }
+  }
+  return str;
+}
+
+//+-----------------------------------------------------------------+
+//| Преобразовывает тип позиции в строку
+//+-----------------------------------------------------------------+
+string positionTypeToStr(ENUM_POSITION_TYPE position_type)
+{
+  string str;
+
+  switch (position_type)
+  {
+    case POSITION_TYPE_BUY:          { str = "BUY"; } break;
+    case POSITION_TYPE_SELL:         { str = "SELL"; } break;
+    default:                         { str = "INVALID POSITION TYPE"; }
+  }
+  return str;
 }
 
 #ifdef DEF_SHOW_EXPERT_STATUS
@@ -120,8 +171,8 @@ void setLabelText(long chart_id, string name, string text)
 void showExpertStatus(ExpertStatusEnum status, string text)
 {
   setLabelText(DEF_CHART_ID, label_status, "Balance: " +
-    moneyToStr(input_real_balance) + " [" +    
-    IntegerToString(input_cur_attemp) + " / " + 
+    moneyToStr(input_real_balance) + " [" +
+    IntegerToString(input_cur_attemp) + " / " +
     moneyToStr(calcDepositRisk()) + "] " +
     IntegerToString(status, 2, '0') + " " + text);
 }
@@ -172,9 +223,9 @@ void setDebugStatus(string text)
 //+-----------------------------------------------------------------+
 //| Выводит сообщение в журнал и в статус советника
 //+-----------------------------------------------------------------+
-void printLog(LogLevelEnum level_log, string text)
+void printLog(LogLevelEnum level_log, string fn_name, int fn_line, string text)
 {
-  PrintFormat("%s: %s:%d %s", log_level_names[level_log], __FUNCTION__, __LINE__, text);
+  PrintFormat("%s: %s():%d>> %s", log_level_names[level_log], fn_name, fn_line, text);
 
 #ifdef DEF_SHOW_EXPERT_STATUS
   showExpertStatus(expert_status, text);
@@ -184,72 +235,41 @@ void printLog(LogLevelEnum level_log, string text)
 //+-----------------------------------------------------------------+
 //| Выводит результат работы
 //+-----------------------------------------------------------------+
-void printResult(const MqlTradeResult &result)
-{
-  printLog(LOG_Info, StringFormat("retcode=%u; deal=%I64u; order=%I64u", result.retcode, result.deal, result.order));   
-}
+#define PRINT_LOG(log_level, str) printLog(log_level, __FUNCTION__, __LINE__, str);
+#define PRINT_RESULT(result) printLog(LOG_Info, __FUNCTION__, __LINE__, StringFormat("retcode=%u; deal=%I64u; order=%I64u", result.retcode, result.deal, result.order));
 
-//+-----------------------------------------------------------------+
-//| Проверяет что цена не установлена
-//+-----------------------------------------------------------------+
-bool isZeroPrice(double price)
+//+------------------------------------------------------------------+
+//| Создает метку на экране
+//+------------------------------------------------------------------+
+void CreateLabel(long chart_id, string name, string text, int corner, int x, int y,
+                 color tc = CLR_NONE, int fs = 9, string fn = "Arial")
 {
-  return price < 0.0001;
-}
-
-//+-----------------------------------------------------------------+
-//| Преобразовывает цену в строку
-//+-----------------------------------------------------------------+
-string priceToStr(double price)
-{
-  return DoubleToString(price, _Digits - 1);
-}
-
-//+-----------------------------------------------------------------+
-//| Преобразовывает деньги в строку
-//+-----------------------------------------------------------------+
-string moneyToStr(double money)
-{
-  return "$" + DoubleToString(money, 2);
-}
-
-//+-----------------------------------------------------------------+
-//| Преобразовывает деньги в лоты
-//+-----------------------------------------------------------------+
-double moneyToLots(double money)
-{
-  return NormalizeDouble(money / 100000.0, 2);
-}
-
-//+-----------------------------------------------------------------+
-//| Преобразовывает лоты в деньги
-//+-----------------------------------------------------------------+
-double lotsToMoney(double lots)
-{
-  return NormalizeDouble(lots * 100000.0, 2);
-}
-
-//+-----------------------------------------------------------------+
-//| Преобразовывает тип ордера в строку
-//+-----------------------------------------------------------------+
-string orderTypeToStr(ENUM_ORDER_TYPE order_type)
-{
-  string str;
-
-  switch (order_type)
+  if (-1 == ObjectFind(chart_id, name))
   {
-    case ORDER_TYPE_BUY:             { str = "BUY"; } break;
-    case ORDER_TYPE_SELL:            { str = "SELL"; } break;
-    case ORDER_TYPE_BUY_LIMIT:       { str = "BUY_LIMIT"; } break;
-    case ORDER_TYPE_SELL_LIMIT:      { str = "SELL_LIMIT"; } break;
-    case ORDER_TYPE_BUY_STOP:        { str = "BUY_STOP"; } break;
-    case ORDER_TYPE_SELL_STOP:       { str = "SELL_STOP"; } break;
-    case ORDER_TYPE_BUY_STOP_LIMIT:  { str = "BUY_STOP_LIMIT"; } break;
-    case ORDER_TYPE_SELL_STOP_LIMIT: { str = "SELL_STOP_LIMIT"; } break;
-    case ORDER_TYPE_CLOSE_BY:        { str = "CLOSE_BY"; } break;
-    default:                         { str = "INVALID ORDER TYPE"; }
-  }
-  return str;
+    if (ObjectCreate(chart_id, name, OBJ_LABEL, 0, 0, 0 ))
+    {
+      ObjectSetString(chart_id, name, OBJPROP_TEXT, text);
+      ObjectSetString(chart_id, name, OBJPROP_FONT, fn);
+      ObjectSetInteger(chart_id, name, OBJPROP_FONTSIZE, fs);
+      ObjectSetInteger(chart_id, name, OBJPROP_COLOR, tc);
+      ObjectSetInteger(chart_id, name, OBJPROP_CORNER, corner);
+      ObjectSetInteger(chart_id, name, OBJPROP_XDISTANCE, x);
+      ObjectSetInteger(chart_id, name, OBJPROP_YDISTANCE, y);
+      ObjectSetInteger(chart_id, name, OBJPROP_SELECTABLE, false);
+      ChartRedraw(chart_id);
+    }
+    else
+      PRINT_LOG(LOG_Error, "can not create new object" + "");
+  } else
+    PRINT_LOG(LOG_Error, "object '" + name + "' was found");
+}
+
+//+-----------------------------------------------------------------+
+//| Устанавливает текст в метке
+//+-----------------------------------------------------------------+
+void setLabelText(long chart_id, string name, string text)
+{
+  ObjectSetString(chart_id, name, OBJPROP_TEXT, text);
 }
 
 //+------------------------------------------------------------------+
@@ -276,19 +296,19 @@ bool getCurrentHour(datetime &dt)
 bool getCurrentPrice(double &ask, double &bid)
 {
   MqlTick last_tick = {0};
-   
+
   if (SymbolInfoTick(DEF_SYMBOL, last_tick))
   {
     ask = last_tick.ask;
     bid = last_tick.bid;
-      
+
     return true;
   } else
     ask = bid = 0.0;
-    
+
     PRINT_LOG(LOG_Error, "can`t get currunt price." +
       " Err:" + IntegerToString(GetLastError()));
-   
+
   return false;
 }
 
@@ -342,12 +362,11 @@ uint getCountConsecutiveLossDeal(datetime &time_last_loss, double &resote_money)
 //+------------------------------------------------------------------+
 bool openPosition(ENUM_POSITION_TYPE type, double volume, double ask, double bid, double tp, double sl)
 {
-  //--- declare and initialize the trade request and result of trade request
-  MqlTradeRequest request={0};
-  MqlTradeResult  result={0};
-  MqlTradeCheckResult resultCheck={0};
-   
-  //--- parameters of request
+  MqlTradeResult  result = {0};
+  MqlTradeRequest request = {0};
+  MqlTradeCheckResult resultCheck = {0};
+
+  // Parameters of request
   request.action    = TRADE_ACTION_DEAL; // type of trade operation
   request.symbol    = DEF_SYMBOL;        // symbol
   request.type      = type == POSITION_TYPE_BUY ? ORDER_TYPE_BUY : ORDER_TYPE_SELL; // order type
@@ -355,10 +374,14 @@ bool openPosition(ENUM_POSITION_TYPE type, double volume, double ask, double bid
   request.price     = type == POSITION_TYPE_BUY ? ask : bid; // price for opening
   request.tp        = tp;
   request.sl        = sl;
-  request.deviation = 5;                 // allowed deviation from the price  
+  request.deviation = 5;                 // allowed deviation from the price
   request.type_filling = ORDER_FILLING_FOK;
 
-  //--- send the request
+  order_ticket = 0; // сбрасываем номер ордера
+
+  PRINT_LOG(LOG_Info, positionTypeToStr(type) + " " + volumeToStr(volume) + " " + priceToStr(ask) + "/" + priceToStr(bid) + " tp=" + priceToStr(tp) + " sl=" + priceToStr(sl));
+
+  // Send the request
   if (OrderCheck(request, resultCheck))
   {
     if (OrderSend(request, result)) {
@@ -368,18 +391,17 @@ bool openPosition(ENUM_POSITION_TYPE type, double volume, double ask, double bid
         if (result.order > 0)
         {
           order_ticket = result.order;
-          Print(__FUNCTION__," Order sent in sync mode");
+          PRINT_LOG(LOG_Info, ticketToStr(order_ticket) + " sent in sync mode, successful");
+
           return true;
         }
       }
-    }
-  }
+    } else
+      PRINT_LOG(LOG_Error, ticketToStr(order_ticket) + " error: %d" + IntegerToString(GetLastError()));
+  } else
+    PRINT_LOG(LOG_Error, ticketToStr(order_ticket) + " error: %d" + IntegerToString(GetLastError()));
 
-  order_ticket = 0;
-
-  printResult(result);
-
-  return TRADE_RETCODE_DONE == result.retcode; // request completed
+  return false;
 }
 
 //+------------------------------------------------------------------+
@@ -387,26 +409,35 @@ bool openPosition(ENUM_POSITION_TYPE type, double volume, double ask, double bid
 //+------------------------------------------------------------------+
 bool movePositionSLTP(ulong ticket, double tp, double sl)
 {
-   MqlTradeRequest request;
-   MqlTradeResult  result;
-   
-   //--- установка параметров операции
-   request.action   = TRADE_ACTION_SLTP; // тип торговой операции
-   request.position = ticket;   // тикет позиции
-   request.symbol   = DEF_SYMBOL;        // символ 
-   request.sl       = sl;                // Stop Loss позиции
-   request.tp       = tp;                // Take Profit позиции   
-   
-   // отправка запроса
-   if (!OrderSend(request, result))
-   {
-     PrintFormat("OrderSend error %d",GetLastError());  // если отправить запрос не удалось, вывести код ошибки
-     return false;
-   }
-   
-   printResult(result);
-   
-   return TRADE_RETCODE_DONE == result.retcode;
+  MqlTradeResult result = {0};
+  MqlTradeRequest request = {0};
+  MqlTradeCheckResult resultCheck = {0};
+
+  // Установка параметров операции
+  request.action   = TRADE_ACTION_SLTP; // тип торговой операции
+  request.position = ticket;            // тикет позиции
+  request.symbol   = DEF_SYMBOL;        // символ
+  request.sl       = sl;                // Stop Loss позиции
+  request.tp       = tp;                // Take Profit позиции
+
+  PRINT_LOG(LOG_Info, ticketToStr(ticket) + " tp=" + priceToStr(tp) + " sl=" + priceToStr(sl));
+
+  // Send the request
+  if (OrderCheck(request, resultCheck))
+  {
+    if (OrderSend(request, result)) {
+      if (TRADE_RETCODE_DONE == result.retcode ||
+          TRADE_RETCODE_PLACED == result.retcode)
+      {
+        PRINT_LOG(LOG_Info, ticketToStr(ticket) + " successful");
+        return true;
+      }
+    } else
+      PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: %d" + IntegerToString(GetLastError()));
+  } else
+    PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: %d" + IntegerToString(GetLastError()));
+
+  return false;
 }
 
 //+------------------------------------------------------------------+
@@ -414,8 +445,9 @@ bool movePositionSLTP(ulong ticket, double tp, double sl)
 //+------------------------------------------------------------------+
 bool closePosition(ENUM_POSITION_TYPE type, ulong ticket, double volume, double ask, double bid)
 {
-  MqlTradeResult result={0};
-  MqlTradeRequest request={0};
+  MqlTradeResult result = {0};
+  MqlTradeRequest request = {0};
+  MqlTradeCheckResult resultCheck = {0};
 
   request.action = TRADE_ACTION_DEAL;
   request.position = ticket;
@@ -423,7 +455,9 @@ bool closePosition(ENUM_POSITION_TYPE type, ulong ticket, double volume, double 
   request.volume = volume;
   request.deviation = 5; // допустимое отклонение от цены
   /* request.magic =EXPERT_MAGIC; */
- 
+
+  PRINT_LOG(LOG_Info, positionTypeToStr(type) + " " + ticketToStr(ticket) + " " + volumeToStr(volume) + " " + priceToStr(ask) + "/" + priceToStr(bid));
+
   if(POSITION_TYPE_BUY == type)
   {
     request.price = bid;
@@ -432,17 +466,26 @@ bool closePosition(ENUM_POSITION_TYPE type, ulong ticket, double volume, double 
     request.price = ask;
     request.type = ORDER_TYPE_BUY;
   }
-  
-  // отправка запроса
-  if (!OrderSend(request, result))
+
+  // Send the request
+  if (OrderCheck(request, resultCheck))
   {
-    PrintFormat("OrderSend error %d",GetLastError());  // если отправить запрос не удалось, вывести код ошибки
-    return false;
-  }
-  
-  printResult(result);
-     
-  return TRADE_RETCODE_DONE == result.retcode;   
+    if (OrderSend(request, result)) {
+      if (TRADE_RETCODE_DONE == result.retcode ||
+          TRADE_RETCODE_PLACED == result.retcode)
+      {
+        if (result.order > 0)
+        {
+          PRINT_LOG(LOG_Info,ticketToStr(ticket) + " successful");
+          return true;
+        }
+      }
+    } else
+      PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: %d" + IntegerToString(GetLastError()));
+  } else
+    PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: %d" + IntegerToString(GetLastError()));
+
+  return false;
 }
 
 //+------------------------------------------------------------------+
@@ -454,21 +497,21 @@ void checkCurrentPrice(double ask, double bid)
    double sl, tp, po, dimension, volume;
    ENUM_POSITION_TYPE type;
    int i, total = PositionsTotal(); // количество открытых позиций
-   
+
    // Перебор всех открытых позиций
    for (i = 0; i < total; i++)
-   {      
+   {
       ticket = PositionGetTicket(i);// тикет позиции
-      
+
       sl = PositionGetDouble(POSITION_SL);  // Stop Loss позиции
       tp = PositionGetDouble(POSITION_TP);  // Take Profit позиции
-      po = PositionGetDouble(POSITION_PRICE_OPEN);      
+      po = PositionGetDouble(POSITION_PRICE_OPEN);
       type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);  // тип позиции
       volume = PositionGetDouble(POSITION_VOLUME); // объем позиции
-      /*string position_symbol=PositionGetString(POSITION_SYMBOL); // символ 
+      /*string position_symbol=PositionGetString(POSITION_SYMBOL); // символ
       int    digits=(int)SymbolInfoInteger(position_symbol,SYMBOL_DIGITS); // количество знаков после запятой
       ulong  magic=PositionGetInteger(POSITION_MAGIC); // MagicNumber позиции */
-            
+
       //--- вывод информации о позиции
       /* PrintFormat("#%I64u %s  open: %s  sl: %s  tp: %s",
                   ticket, EnumToString(type), priceToStr(po), priceToStr(sl), priceToStr(tp)); */
@@ -476,7 +519,7 @@ void checkCurrentPrice(double ask, double bid)
       // 1. Обрабатывем позицию если установлен TP
       if (isZeroPrice(tp))
         continue;
-      
+
       // 2. Проверяем что цена в зоне реального TP/SL и закрывем всю позицию принудительно
       if ((POSITION_TYPE_BUY == type && (ask > (tp - param_real_dist_stop) || (ask < po - (tp - po) - param_real_dist_stop))) ||
           (POSITION_TYPE_SELL == type && (bid < (tp + param_real_dist_stop) || (bid > po + (po - tp) - param_real_dist_stop))))
@@ -484,36 +527,36 @@ void checkCurrentPrice(double ask, double bid)
         closePosition(type, ticket, volume, ask, bid);
         continue;
       }
-      
-      // 3. Проверяем наличие защитного SL, если защитный SL уже установлен, то его никогда не убираем      
+
+      // 3. Проверяем наличие защитного SL, если защитный SL уже установлен, то его никогда не убираем
       if (POSITION_TYPE_BUY == type)
-      {        
+      {
         dimension = (tp - po) * input_k_protected_sl;
-        
+
         if (bid >= po + dimension) // если цена близка к TP
-        {          
+        {
           if (sl < po + param_djitter) // если защитный SL еще не установлен
           {
             // Вычисляем новый SL
             sl = po + param_djitter;
-            
+
             // Сдвигаем защитный SL
             movePositionSLTP(ticket, tp, sl);
             continue;
           }
         }
-        
+
       } else { /* POSITION_TYPE_SELL */
 
         dimension = (po - tp) * input_k_protected_sl;
-        
+
         if (ask <= po - dimension) // если цена близка к TP
-        {          
+        {
           if (sl > po - param_djitter) // если защитный SL еще не установлен
           {
             // Вычисляем новый SL
             sl = po - param_djitter;
-            
+
             // Сдвигаем защитный SL
             movePositionSLTP(ticket, tp, sl);
             continue;
@@ -543,7 +586,7 @@ int OnInit()
 #endif
 
   setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
-  
+
   /* handle_alligator = iAlligator(DEF_SYMBOL, DEF_TIMEFRAME, 13, 8, 8, 5, 5, 2, MODE_SMA, PRICE_MEDIAN); */
 
 //--- create timer
@@ -571,28 +614,28 @@ void OnTick()
   if (PositionSelect(DEF_SYMBOL))
   {
     double ask, bid;
-        
-    getCurrentPrice(ask, bid);    
+
+    getCurrentPrice(ask, bid);
     checkCurrentPrice(ask, bid);
-        
+
     return;
   }
-  
+
 #ifdef DEF_DEBUG_FORCE_OPEN_DEAL
   if (need_open_deal)
   {
 
     ENUM_POSITION_TYPE type;
     double ask, bid, tp, sl;
-  
+
     tp = 0.0;
     sl = 0.0;
-    
+
     // Получаем текущую цену
     getCurrentPrice(ask, bid);
-    type = POSITION_TYPE_BUY; tp = 1.1498; sl = 0.0;    
+    type = POSITION_TYPE_BUY; tp = 1.1498; sl = 0.0;
     /* type = POSITION_TYPE_SELL; tp = 1.1420; sl = 0.0; */
-    
+
     // Открываем позицию
     openPosition(type, 0.1, ask, bid, tp, sl);
 
@@ -616,7 +659,7 @@ void OnTimer()
     // По какой-то причине сервер не открыл позицию, повторяем попытку открытия сделки
     PRINT_LOG(LOG_Error, "Can`t open DEAL, timer expired");
     need_open_deal = true;
-    
+
     EventKillTimer(); // останавливаем таймер
   }
 #endif
@@ -648,7 +691,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
         order_ticket = 0;
         setExpertStatus(ESE_DealGuard);
-        
+
         EventKillTimer(); // останавливаем таймер проверки открытия позиции
       }
     } break;
