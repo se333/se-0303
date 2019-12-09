@@ -476,7 +476,7 @@ bool closePosition(ENUM_POSITION_TYPE type, ulong ticket, double volume, double 
       {
         if (result.order > 0)
         {
-          PRINT_LOG(LOG_Info,ticketToStr(ticket) + " successful");
+          PRINT_LOG(LOG_Info, ticketToStr(ticket) + " successful");
           return true;
         }
       }
@@ -545,7 +545,6 @@ void checkCurrentPrice(double ask, double bid)
             continue;
           }
         }
-
       } else { /* POSITION_TYPE_SELL */
 
         dimension = (po - tp) * input_k_protected_sl;
@@ -563,6 +562,18 @@ void checkCurrentPrice(double ask, double bid)
           }
         }
       }
+      
+      // 4. Убираем пинг-SL, если пинг-SL установлен за дистанцией большей чем TP
+      if (!isZeroPrice(sl))
+      {
+        if ((POSITION_TYPE_BUY == type && (sl < (po - (tp - po)))) || 
+            (POSITION_TYPE_SELL == type && (sl > (po + (po - tp)))))
+        {
+          // Убираем пинг-SL
+          PRINT_LOG(LOG_Info, "Delete ping-SL for " + ticketToStr(ticket));
+          movePositionSLTP(ticket, tp, 0.0);
+        }
+      }      
    }
 }
 
@@ -633,7 +644,10 @@ void OnTick()
 
     // Получаем текущую цену
     getCurrentPrice(ask, bid);
-    type = POSITION_TYPE_BUY; tp = 1.1498; sl = 0.0;
+    if (ask < 1.1450)
+      return;
+      
+    type = POSITION_TYPE_BUY; tp = 1.1490; sl = 1.1400;
     /* type = POSITION_TYPE_SELL; tp = 1.1420; sl = 0.0; */
 
     // Открываем позицию
