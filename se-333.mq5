@@ -397,9 +397,9 @@ bool openPosition(ENUM_POSITION_TYPE type, double volume, double ask, double bid
         }
       }
     } else
-      PRINT_LOG(LOG_Error, ticketToStr(order_ticket) + " error: %d" + IntegerToString(GetLastError()));
+      PRINT_LOG(LOG_Error, ticketToStr(order_ticket) + " error: " + IntegerToString(GetLastError()));
   } else
-    PRINT_LOG(LOG_Error, ticketToStr(order_ticket) + " error: %d" + IntegerToString(GetLastError()));
+    PRINT_LOG(LOG_Error, ticketToStr(order_ticket) + " error: " + IntegerToString(GetLastError()));
 
   return false;
 }
@@ -433,9 +433,9 @@ bool movePositionSLTP(ulong ticket, double tp, double sl)
         return true;
       }
     } else
-      PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: %d" + IntegerToString(GetLastError()));
+      PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: " + IntegerToString(GetLastError()));
   } else
-    PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: %d" + IntegerToString(GetLastError()));
+    PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: " + IntegerToString(GetLastError()));
 
   return false;
 }
@@ -481,9 +481,9 @@ bool closePosition(ENUM_POSITION_TYPE type, ulong ticket, double volume, double 
         }
       }
     } else
-      PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: %d" + IntegerToString(GetLastError()));
+      PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: " + IntegerToString(GetLastError()));
   } else
-    PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: %d" + IntegerToString(GetLastError()));
+    PRINT_LOG(LOG_Error, ticketToStr(ticket) + " error: " + IntegerToString(GetLastError()));
 
   return false;
 }
@@ -494,7 +494,7 @@ bool closePosition(ENUM_POSITION_TYPE type, ulong ticket, double volume, double 
 void checkCurrentPrice(double ask, double bid)
 {
    ulong  ticket; // тикет позиции
-   double sl, tp, po, dimension, volume;
+   double sl, tp, po, volume;
    ENUM_POSITION_TYPE type;
    int i, total = PositionsTotal(); // количество открытых позиций
 
@@ -521,59 +521,38 @@ void checkCurrentPrice(double ask, double bid)
         continue;
 
       // 2. Проверяем что цена в зоне реального TP/SL и закрывем всю позицию принудительно
-      if ((POSITION_TYPE_BUY == type && (ask > (tp - param_real_dist_stop) || (ask < po - (tp - po) - param_real_dist_stop))) ||
-          (POSITION_TYPE_SELL == type && (bid < (tp + param_real_dist_stop) || (bid > po + (po - tp) - param_real_dist_stop))))
+      if ((POSITION_TYPE_BUY == type && (bid > (tp - param_real_dist_stop) || (bid < po - (tp - po) - param_real_dist_stop))) ||
+          (POSITION_TYPE_SELL == type && (ask < (tp + param_real_dist_stop) || (ask > po + (po - tp) - param_real_dist_stop))))
       {
         closePosition(type, ticket, volume, ask, bid);
         continue;
       }
 
-      // 3. Проверяем наличие защитного SL, если защитный SL уже установлен, то его никогда не убираем
-      if (POSITION_TYPE_BUY == type)
-      {
-        dimension = (tp - po) * input_k_protected_sl;
-
-        if (bid >= po + dimension) // если цена близка к TP
-        {
-          if (sl < po + param_djitter) // если защитный SL еще не установлен
-          {
-            // Вычисляем новый SL
-            sl = po + param_djitter;
-
-            // Сдвигаем защитный SL
-            movePositionSLTP(ticket, tp, sl);
-            continue;
-          }
-        }
-      } else { /* POSITION_TYPE_SELL */
-
-        dimension = (po - tp) * input_k_protected_sl;
-
-        if (ask <= po - dimension) // если цена близка к TP
-        {
-          if (sl > po - param_djitter) // если защитный SL еще не установлен
-          {
-            // Вычисляем новый SL
-            sl = po - param_djitter;
-
-            // Сдвигаем защитный SL
-            movePositionSLTP(ticket, tp, sl);
-            continue;
-          }
-        }
-      }
-      
-      // 4. Убираем пинг-SL, если пинг-SL установлен за дистанцией большей чем TP
+      // 3. Убираем пинг-SL, если пинг-SL установлен за дистанцией большей чем TP
       if (!isZeroPrice(sl))
       {
-        if ((POSITION_TYPE_BUY == type && (sl < (po - (tp - po)))) || 
+        if ((POSITION_TYPE_BUY == type && (sl < (po - (tp - po)))) ||
             (POSITION_TYPE_SELL == type && (sl > (po + (po - tp)))))
         {
           // Убираем пинг-SL
-          PRINT_LOG(LOG_Info, "Delete ping-SL for " + ticketToStr(ticket));
+          PRINT_LOG(LOG_Info, "Delete the ping-SL for " + ticketToStr(ticket));
           movePositionSLTP(ticket, tp, 0.0);
+          continue;
         }
-      }      
+      } else { // 4. Проверяем наличие защитного SL, если защитный SL уже установлен, то его никогда не убираем
+
+        if ((POSITION_TYPE_BUY == type && bid >= (po + ((tp - po) * input_k_protected_sl))) ||
+            (POSITION_TYPE_SELL == type && ask <= (po - ((po - tp) * input_k_protected_sl))))
+        {
+          // Вычисляем новый SL
+          sl = POSITION_TYPE_BUY == type ? (po + param_djitter) : (po - param_djitter);
+
+          // Устанавливаем защитный SL
+          PRINT_LOG(LOG_Info, "Set the protected SL for " + ticketToStr(ticket));
+          movePositionSLTP(ticket, tp, sl);
+          continue;
+        }
+      }
    }
 }
 
@@ -643,17 +622,17 @@ void OnTick()
     sl = 0.0;
 
     // Получаем текущую цену
-    getCurrentPrice(ask, bid);
-    if (ask < 1.1450)
+    getCurrentPrice(ask, bid);    
+    if (bid < 1.1490)
       return;
       
-    type = POSITION_TYPE_BUY; tp = 1.1490; sl = 1.1400;
-    /* type = POSITION_TYPE_SELL; tp = 1.1420; sl = 0.0; */
+    /* type = POSITION_TYPE_BUY; tp = 1.1490; sl = 1.1412; */
+    type = POSITION_TYPE_SELL; tp = 1.1450; sl = 1.1543;
 
     // Открываем позицию
     openPosition(type, 0.1, ask, bid, tp, sl);
 
-    // 13. Ожидаем открытия позиции
+    // Ожидаем открытия позиции
     setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
     EventSetTimer(DEF_WAIT_OPEN_DEAL_TIME); // запускаем таймер, на случай если сервер не открыл позицию
     need_open_deal = false;
