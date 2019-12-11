@@ -164,6 +164,22 @@ string positionTypeToStr(ENUM_POSITION_TYPE position_type)
   return str;
 }
 
+//+-----------------------------------------------------------------+
+//| Отправляет письмо
+//+-----------------------------------------------------------------+
+bool SendActionMail(string subject, string some_text)
+{
+  return SendMail(subject, some_text);
+}
+
+//+-----------------------------------------------------------------+
+//| Уровнение прямой по 2-м координатам
+//+-----------------------------------------------------------------+
+double getLineX(double x1, double y1, double x2, double y2, double y)
+{
+  return (y-y1)/(y2-y1)*(x2-x1)+x1;
+}
+
 #ifdef DEF_SHOW_EXPERT_STATUS
 //+-----------------------------------------------------------------+
 //| Показывает статус советника
@@ -570,6 +586,9 @@ double calcDepositRisk()
 //+------------------------------------------------------------------+
 int OnInit()
 {
+ //SendNotification("TEST -111"); 
+ // double x = getLineX(1.0, 1.0, 5.0, 3.0, 2.0); x - должен быть 3.0 при правильной работе функции
+ 
 #ifdef DEF_SHOW_DEBUG_STATUS
   CreateLabel(DEF_CHART_ID, label_status, "Balance: ", 0, 5, 20, clrYellow);
   CreateLabel(DEF_CHART_ID, label_trend, "INFO:", 0, 5, 40, clrYellow);
