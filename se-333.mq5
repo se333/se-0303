@@ -59,6 +59,9 @@ const string label_trend = "labelTrend";
 
 const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
 
+const string trend_line_name_up   = "UPLINE";
+const string trend_line_name_down = "DOWNLINE";
+
 //+------------------------------------------------------------------+
 //| Static parameters
 //+------------------------------------------------------------------+
@@ -260,7 +263,7 @@ void printLog(LogLevelEnum level_log, string fn_name, int fn_line, string text)
 void CreateLabel(long chart_id, string name, string text, int corner, int x, int y,
                  color tc = CLR_NONE, int fs = 9, string fn = "Arial")
 {
-  if (-1 == ObjectFind(chart_id, name))
+  if (ObjectFind(chart_id, name)<0)
   {
     if (ObjectCreate(chart_id, name, OBJ_LABEL, 0, 0, 0 ))
     {
@@ -582,13 +585,115 @@ double calcDepositRisk()
 }
 
 //+------------------------------------------------------------------+
+//| Проверяет значения точек привязки линии тренда и для пустых |
+//| значений устанавливает значения по умолчанию |
+//+------------------------------------------------------------------+
+void getTrendEmptyPoints(datetime &time1,double &price1,
+ datetime &time2,double &price2)
+ {
+//--- если время первой точки не задано, то она будет на текущем баре
+ if(!time1)
+ time1=TimeCurrent();
+//--- если цена первой точки не задана, то она будет иметь значение Bid
+ if(!price1)
+ price1=SymbolInfoDouble(Symbol(),SYMBOL_BID);
+//--- если время второй точки не задано, то она лежит на 9 баров левее второй
+ if(!time2)
+ {
+ //--- массив для приема времени открытия 10 последних баров
+ datetime temp[10];
+ CopyTime(Symbol(),Period(),time1,10,temp);
+ //--- установим вторую точку на 9 баров левее первой
+ time2=temp[0];
+ }
+//--- если цена второй точки не задана, то она совпадает с ценой первой точки
+ if(!price2)
+ price2=price1;
+ }
+ 
+//+------------------------------------------------------------------+
+//| Создает линию тренда по заданным координатам |
+//+------------------------------------------------------------------+
+bool TrendCreate(const long chart_ID=0, // ID графика
+ const string name="TrendLine", // имя линии
+ const int sub_window=0, // номер подокна
+ datetime time1=0, // время первой точки
+ double price1=0, // цена первой точки
+ datetime time2=0, // время второй точки
+ double price2=0, // цена второй точки
+ const color clr=clrRed, // цвет линии
+ const ENUM_LINE_STYLE style=STYLE_SOLID, // стиль линии
+ const int width=1, // толщина линии
+ const bool back=false, // на заднем плане
+ const bool selection=true, // выделить для перемещений
+ const bool ray_left=false, // продолжение линии влево
+ const bool ray_right=false, // продолжение линии вправо
+ const bool hidden=true, // скрыт в списке объектов
+ const long z_order=0) // приоритет на нажатие мышью
+ {
+
+//--- создадим трендовую линию по заданным координатам
+ if(!ObjectCreate(chart_ID,name,OBJ_TREND,sub_window,time1,price1,time2,price2))
+ {
+ Print(__FUNCTION__,
+ ": не удалось создать линию тренда! Код ошибки = ",GetLastError());
+ return(false);
+ }
+//--- установим цвет линии
+ ObjectSetInteger(chart_ID,name,OBJPROP_COLOR,clr);
+//--- установим стиль отображения линии
+ ObjectSetInteger(chart_ID,name,OBJPROP_STYLE,style);
+//--- установим толщину линии
+ ObjectSetInteger(chart_ID,name,OBJPROP_WIDTH,width);
+//--- отобразим на переднем (false) или заднем (true) плане
+ ObjectSetInteger(chart_ID,name,OBJPROP_BACK,back);
+//--- включим (true) или отключим (false) режим перемещения линии мышью
+//--- при создании графического объекта функцией ObjectCreate, по умолчанию объект
+//--- нельзя выделить и перемещать. Внутри же этого метода параметр selection
+
+//--- по умолчанию равен true, что позволяет выделять и перемещать этот объект
+ ObjectSetInteger(chart_ID,name,OBJPROP_SELECTABLE,selection);
+ ObjectSetInteger(chart_ID,name,OBJPROP_SELECTED,selection);
+//--- включим (true) или отключим (false) режим продолжения отображения линии влево
+ ObjectSetInteger(chart_ID,name,OBJPROP_RAY_LEFT,ray_left);
+//--- включим (true) или отключим (false) режим продолжения отображения линии вправо
+ ObjectSetInteger(chart_ID,name,OBJPROP_RAY_RIGHT,ray_right);
+//--- скроем (true) или отобразим (false) имя графического объекта в списке объектов
+ ObjectSetInteger(chart_ID,name,OBJPROP_HIDDEN,hidden);
+//--- установим приоритет на получение события нажатия мыши на графике
+ ObjectSetInteger(chart_ID,name,OBJPROP_ZORDER,z_order);
+//--- успешное выполнение
+ return(true);
+ }
+
+//+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
  //SendNotification("TEST -111"); 
  // double x = getLineX(1.0, 1.0, 5.0, 3.0, 2.0); x - должен быть 3.0 при правильной работе функции
+ // Трендовая линия OBJ_TREND ObjectGetTimeByValue
+
+  datetime time1; double price1; datetime time2; double price2;
+  
+  getTrendEmptyPoints(time1, price1, time2, price2);
  
+  TrendCreate(DEF_CHART_ID, trend_line_name_up, 0, time1, price1, time2, price2);
+ 
+  if (ObjectFind(DEF_CHART_ID, trend_line_name_up) >= 0)
+  {
+#define TREND_POINTS_CNT 2
+    datetime dt[TREND_POINTS_CNT];
+    double price[TREND_POINTS_CNT];
+    
+    dt[0] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_line_name_up, OBJPROP_TIME, 0);
+    dt[1] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_line_name_up, OBJPROP_TIME, 1);
+    
+    price[0] = ObjectGetDouble(DEF_CHART_ID, trend_line_name_up, OBJPROP_PRICE, 0);
+    price[1] = ObjectGetDouble(DEF_CHART_ID, trend_line_name_up, OBJPROP_PRICE, 1);    
+  }
+
 #ifdef DEF_SHOW_DEBUG_STATUS
   CreateLabel(DEF_CHART_ID, label_status, "Balance: ", 0, 5, 20, clrYellow);
   CreateLabel(DEF_CHART_ID, label_trend, "INFO:", 0, 5, 40, clrYellow);
