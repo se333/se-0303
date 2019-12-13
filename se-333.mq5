@@ -59,8 +59,7 @@ const string label_trend = "labelTrend";
 
 const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
 
-const string trend_line_name_up   = "UPLINE";
-const string trend_line_name_down = "DOWNLINE";
+const string trend_name_template = "TREND";
 
 //+------------------------------------------------------------------+
 //| Static parameters
@@ -175,14 +174,6 @@ bool SendActionMail(string subject, string some_text)
   return SendMail(subject, some_text);
 }
 
-//+-----------------------------------------------------------------+
-//| Уровнение прямой по 2-м координатам
-//+-----------------------------------------------------------------+
-double getLineX(double x1, double y1, double x2, double y2, double y)
-{
-  return (y-y1)/(y2-y1)*(x2-x1)+x1;
-}
-
 #ifdef DEF_SHOW_EXPERT_STATUS
 //+-----------------------------------------------------------------+
 //| Показывает статус советника
@@ -279,8 +270,7 @@ void CreateLabel(long chart_id, string name, string text, int corner, int x, int
     }
     else
       PRINT_LOG(LOG_Error, "can not create new object" + "");
-  } else
-    PRINT_LOG(LOG_Error, "object '" + name + "' was found");
+  }
 }
 
 //+-----------------------------------------------------------------+
@@ -301,6 +291,24 @@ bool getCurrentHour(datetime &dt)
   if (1 != CopyTime(DEF_SYMBOL, PERIOD_H1, 0, 1, time_array))
   {
     PRINT_LOG(LOG_Error, "can`t get currunt hour array " + TimeToString(time_array[0]) +
+      " Err:" + IntegerToString(GetLastError()));
+     return false;
+  }
+
+  dt = time_array[0];
+  return true;
+}
+
+//+------------------------------------------------------------------+
+//| Возвращает текущий минуту
+//+------------------------------------------------------------------+
+bool getCurrentMinute(datetime &dt)
+{
+  datetime time_array[1];
+
+  if (1 != CopyTime(DEF_SYMBOL, PERIOD_M1, 0, 1, time_array))
+  {
+    PRINT_LOG(LOG_Error, "can`t get currunt minute array " + TimeToString(time_array[0]) +
       " Err:" + IntegerToString(GetLastError()));
      return false;
   }
@@ -612,87 +620,144 @@ void getTrendEmptyPoints(datetime &time1,double &price1,
  }
  
 //+------------------------------------------------------------------+
-//| Создает линию тренда по заданным координатам |
+//| Создает линию тренда по заданным координатам
 //+------------------------------------------------------------------+
 bool TrendCreate(const long chart_ID=0, // ID графика
- const string name="TrendLine", // имя линии
- const int sub_window=0, // номер подокна
- datetime time1=0, // время первой точки
- double price1=0, // цена первой точки
- datetime time2=0, // время второй точки
- double price2=0, // цена второй точки
- const color clr=clrRed, // цвет линии
- const ENUM_LINE_STYLE style=STYLE_SOLID, // стиль линии
- const int width=1, // толщина линии
- const bool back=false, // на заднем плане
- const bool selection=true, // выделить для перемещений
- const bool ray_left=false, // продолжение линии влево
- const bool ray_right=false, // продолжение линии вправо
- const bool hidden=true, // скрыт в списке объектов
- const long z_order=0) // приоритет на нажатие мышью
- {
+    const string name="TrendLine", // имя линии
+    const int sub_window=0, // номер подокна
+    datetime time1=0, // время первой точки
+    double price1=0, // цена первой точки
+    datetime time2=0, // время второй точки
+    double price2=0, // цена второй точки
+    const color clr=clrRed, // цвет линии
+    const ENUM_LINE_STYLE style=STYLE_SOLID, // стиль линии
+    const int width=1, // толщина линии
+    const bool back=false, // на заднем плане
+    const bool selection=true, // выделить для перемещений
+    const bool ray_left=false, // продолжение линии влево
+    const bool ray_right=false, // продолжение линии вправо
+    const bool hidden=true, // скрыт в списке объектов
+    const long z_order=0) // приоритет на нажатие мышью
+{
+  
+  //--- создадим трендовую линию по заданным координатам
+  if(!ObjectCreate(chart_ID,name,OBJ_TREND,sub_window,time1,price1,time2,price2))
+  {
+    Print(__FUNCTION__, ": не удалось создать линию тренда! Код ошибки = ",GetLastError());
+    return(false);
+  }
+  
+  //--- установим цвет линии
+  ObjectSetInteger(chart_ID,name,OBJPROP_COLOR,clr);
+  //--- установим стиль отображения линии
+  ObjectSetInteger(chart_ID,name,OBJPROP_STYLE,style);
+  //--- установим толщину линии
+  ObjectSetInteger(chart_ID,name,OBJPROP_WIDTH,width);
+  //--- отобразим на переднем (false) или заднем (true) плане
+  ObjectSetInteger(chart_ID,name,OBJPROP_BACK,back);
+  //--- включим (true) или отключим (false) режим перемещения линии мышью
+  //--- при создании графического объекта функцией ObjectCreate, по умолчанию объект
+  //--- нельзя выделить и перемещать. Внутри же этого метода параметр selection
+  
+  //--- по умолчанию равен true, что позволяет выделять и перемещать этот объект
+  ObjectSetInteger(chart_ID,name,OBJPROP_SELECTABLE,selection);
+  ObjectSetInteger(chart_ID,name,OBJPROP_SELECTED,selection);
+  //--- включим (true) или отключим (false) режим продолжения отображения линии влево
+  ObjectSetInteger(chart_ID,name,OBJPROP_RAY_LEFT,ray_left);
+  //--- включим (true) или отключим (false) режим продолжения отображения линии вправо
+  ObjectSetInteger(chart_ID,name,OBJPROP_RAY_RIGHT,ray_right);
+  //--- скроем (true) или отобразим (false) имя графического объекта в списке объектов
+  ObjectSetInteger(chart_ID,name,OBJPROP_HIDDEN,hidden);
+  //--- установим приоритет на получение события нажатия мыши на графике
+  ObjectSetInteger(chart_ID,name,OBJPROP_ZORDER,z_order);
+  //--- успешное выполнение
+  
+  return(true);
+}
+//+------------------------------------------------------------------+
 
-//--- создадим трендовую линию по заданным координатам
- if(!ObjectCreate(chart_ID,name,OBJ_TREND,sub_window,time1,price1,time2,price2))
- {
- Print(__FUNCTION__,
- ": не удалось создать линию тренда! Код ошибки = ",GetLastError());
- return(false);
- }
-//--- установим цвет линии
- ObjectSetInteger(chart_ID,name,OBJPROP_COLOR,clr);
-//--- установим стиль отображения линии
- ObjectSetInteger(chart_ID,name,OBJPROP_STYLE,style);
-//--- установим толщину линии
- ObjectSetInteger(chart_ID,name,OBJPROP_WIDTH,width);
-//--- отобразим на переднем (false) или заднем (true) плане
- ObjectSetInteger(chart_ID,name,OBJPROP_BACK,back);
-//--- включим (true) или отключим (false) режим перемещения линии мышью
-//--- при создании графического объекта функцией ObjectCreate, по умолчанию объект
-//--- нельзя выделить и перемещать. Внутри же этого метода параметр selection
+#define TREND_POINTS_CNT 2
 
-//--- по умолчанию равен true, что позволяет выделять и перемещать этот объект
- ObjectSetInteger(chart_ID,name,OBJPROP_SELECTABLE,selection);
- ObjectSetInteger(chart_ID,name,OBJPROP_SELECTED,selection);
-//--- включим (true) или отключим (false) режим продолжения отображения линии влево
- ObjectSetInteger(chart_ID,name,OBJPROP_RAY_LEFT,ray_left);
-//--- включим (true) или отключим (false) режим продолжения отображения линии вправо
- ObjectSetInteger(chart_ID,name,OBJPROP_RAY_RIGHT,ray_right);
-//--- скроем (true) или отобразим (false) имя графического объекта в списке объектов
- ObjectSetInteger(chart_ID,name,OBJPROP_HIDDEN,hidden);
-//--- установим приоритет на получение события нажатия мыши на графике
- ObjectSetInteger(chart_ID,name,OBJPROP_ZORDER,z_order);
-//--- успешное выполнение
- return(true);
- }
+class Trend {
+  public:
+    Trend(datetime dt0, double price0,datetime dt1, double price1);
+    
+    void setPoint(int index, datetime dt, double price);
+    void getPoint(int index, datetime &dt, double &price);
+    
+    double getTrendPriceByDatetime(datetime dt);
+    
+    int getTrendPoints() { return TREND_POINTS_CNT; }
+    
+  private:  
+    struct TrendPoint {
+      datetime dt;
+      double price;
+    };
+
+    TrendPoint points[TREND_POINTS_CNT];
+};
+//+------------------------------------------------------------------+
+
+Trend::Trend(datetime dt0, double price0,datetime dt1, double price1)
+{  
+  setPoint(0, dt0, price0);
+  setPoint(1, dt1, price1);
+}
+//+------------------------------------------------------------------+
+
+void Trend::setPoint(int index, datetime dt, double price)
+{
+  if (index < TREND_POINTS_CNT)
+  {
+    points[index].dt = dt;
+    points[index].price = price;
+    
+    PRINT_LOG(LOG_Info, "Trend::setPoint[" + IntegerToString(index) + "] dt=" + IntegerToString(dt)+ " " + TimeToString(dt) + " price=" + DoubleToString(price));
+    
+  } else
+    PRINT_LOG(LOG_Error, "invalid index");
+}
+//+------------------------------------------------------------------+
+
+void Trend::getPoint(int index, datetime &dt, double &price)
+{
+  if (index < TREND_POINTS_CNT)
+  {
+    dt = points[index].dt;
+    price = points[index].price;
+  } else
+    PRINT_LOG(LOG_Error, "invalid index");
+}
+//+------------------------------------------------------------------+
+
+double Trend::getTrendPriceByDatetime(datetime dt)
+{
+  // double getLineX(double x1, double y1, double x2, double y2, double y)
+  //   return (y-y1)/(y2-y1)*(x2-x1)+x1;
+
+  return ((double)(dt-points[0].dt))/(((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price);
+}
+//+------------------------------------------------------------------+
+
+// #include <Generic\ArrayList.mqh>
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
- //SendNotification("TEST -111"); 
+  // CArrayList<int> arrayList = new CArrayList<int>();
+  
+ //SendNotification("TEST-111"); 
  // double x = getLineX(1.0, 1.0, 5.0, 3.0, 2.0); x - должен быть 3.0 при правильной работе функции
  // Трендовая линия OBJ_TREND ObjectGetTimeByValue
 
-  datetime time1; double price1; datetime time2; double price2;
-  
+  /*datetime time1; double price1; datetime time2; double price2;  
   getTrendEmptyPoints(time1, price1, time2, price2);
+  TrendCreate(DEF_CHART_ID, trend_line_name_up, 0, time1, price1, time2, price2);*/
  
-  TrendCreate(DEF_CHART_ID, trend_line_name_up, 0, time1, price1, time2, price2);
- 
-  if (ObjectFind(DEF_CHART_ID, trend_line_name_up) >= 0)
-  {
-#define TREND_POINTS_CNT 2
-    datetime dt[TREND_POINTS_CNT];
-    double price[TREND_POINTS_CNT];
-    
-    dt[0] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_line_name_up, OBJPROP_TIME, 0);
-    dt[1] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_line_name_up, OBJPROP_TIME, 1);
-    
-    price[0] = ObjectGetDouble(DEF_CHART_ID, trend_line_name_up, OBJPROP_PRICE, 0);
-    price[1] = ObjectGetDouble(DEF_CHART_ID, trend_line_name_up, OBJPROP_PRICE, 1);    
-  }
+
 
 #ifdef DEF_SHOW_DEBUG_STATUS
   CreateLabel(DEF_CHART_ID, label_status, "Balance: ", 0, 5, 20, clrYellow);
@@ -854,8 +919,30 @@ void OnChartEvent(const int id,
                   const long &lparam,
                   const double &dparam,
                   const string &sparam)
-{
+{  
+  if (id == CHARTEVENT_OBJECT_DRAG)
+  {
+    if (StringFind(sparam, trend_name_template) >= 0 && ObjectFind(DEF_CHART_ID, sparam) >= 0)
+    {
+      datetime dt[TREND_POINTS_CNT], dt_curr;
+      double price[TREND_POINTS_CNT];
+      string trend_name = sparam;
+      
+      dt[0] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_name, OBJPROP_TIME, 0);
+      dt[1] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_name, OBJPROP_TIME, 1);
 
+      price[0] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 0);
+      price[1] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 1);
+
+      PRINT_LOG(LOG_Info, "OnChartEvent:" + IntegerToString(id) + " Found trend:" + sparam);
+      
+      Trend trend(dt[0], price[0], dt[1], price[1]);
+      
+      dt_curr = TimeCurrent();      
+      
+      PRINT_LOG(LOG_Info, "OnChartEvent: dt_curr:" + TimeToString(dt_curr) + " price=" + priceToStr(trend.getTrendPriceByDatetime(dt_curr)));
+    }
+  }
 }
 //+------------------------------------------------------------------+
 
