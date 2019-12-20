@@ -246,6 +246,7 @@ void printLog(LogLevelEnum level_log, string fn_name, int fn_line, string text)
 //| Выводит результат работы
 //+-----------------------------------------------------------------+
 #define PRINT_LOG(log_level, str) printLog(log_level, __FUNCTION__, __LINE__, str);
+#define PRINT_DEBUG(log_level, str) printLog(log_level, __FUNCTION__, __LINE__, str);
 #define PRINT_RESULT(result) printLog(LOG_Info, __FUNCTION__, __LINE__, StringFormat("retcode=%u; deal=%I64u; order=%I64u", result.retcode, result.deal, result.order));
 
 //+------------------------------------------------------------------+
@@ -713,7 +714,7 @@ void Trend::setPoint(int index, datetime dt, double price)
     points[index].dt = dt;
     points[index].price = price;
     
-    PRINT_LOG(LOG_Info, "Trend::setPoint[" + IntegerToString(index) + "] dt=" + IntegerToString(dt)+ " " + TimeToString(dt) + " price=" + DoubleToString(price));
+    PRINT_DEBUG(LOG_Info, "Trend::setPoint[" + IntegerToString(index) + "] dt=" + IntegerToString(dt)+ " " + TimeToString(dt) + " price=" + DoubleToString(price));
     
   } else
     PRINT_LOG(LOG_Error, "invalid index");
@@ -735,8 +736,13 @@ double Trend::getTrendPriceByDatetime(datetime dt)
 {
   // double getLineX(double x1, double y1, double x2, double y2, double y)
   //   return (y-y1)/(y2-y1)*(x2-x1)+x1;
-
-  return ((double)(dt-points[0].dt))/(((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price);
+  
+  // Проверка: должен быть 2.0 при правильной работе функции getTrendPriceByDatetime(3)
+  // Trend trend_debug(1, 1.0, 5, 3.0);
+  // PRINT_LOG(LOG_Info, "OnChartEvent: dt_curr_debug:" + " price=" + priceToStr(trend_debug.getTrendPriceByDatetime(3)));
+      
+  // return ((double)(dt-points[0].dt))/(((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price);
+  return ((double)(dt-points[0].dt))/((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price;
 }
 //+------------------------------------------------------------------+
 
@@ -750,7 +756,7 @@ int OnInit()
   // CArrayList<int> arrayList = new CArrayList<int>();
   
  //SendNotification("TEST-111"); 
- // double x = getLineX(1.0, 1.0, 5.0, 3.0, 2.0); x - должен быть 3.0 при правильной работе функции
+ // double x = getLineX(1.0, 1.0, 5.0, 3.0,   2.0); x - должен быть 3.0 при правильной работе функции
  // Трендовая линия OBJ_TREND ObjectGetTimeByValue
 
   /*datetime time1; double price1; datetime time2; double price2;  
@@ -941,6 +947,8 @@ void OnChartEvent(const int id,
       dt_curr = TimeCurrent();      
       
       PRINT_LOG(LOG_Info, "OnChartEvent: dt_curr:" + TimeToString(dt_curr) + " price=" + priceToStr(trend.getTrendPriceByDatetime(dt_curr)));
+
+
     }
   }
 }
