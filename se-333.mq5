@@ -4,6 +4,11 @@
 //|                                                    se333@ukr.net |
 //+------------------------------------------------------------------+
 
+#include <Object.mqh>
+//#include <Arrays\List.mqh>
+//#include <Arrays\ArrayObj.mqh>
+#include "Dictionary.mqh"
+
 //+------------------------------------------------------------------+
 //| Defines
 //+------------------------------------------------------------------+
@@ -15,11 +20,15 @@
 /**/#define DEF_SHOW_EXPERT_STATUS
 #define DEF_SHOW_DEBUG_STATUS/**/
 
-#define DEF_DEBUG_FORCE_OPEN_DEAL // эта отладка для принудительного открытия позиций
+/* #define DEF_DEBUG_FORCE_OPEN_DEAL */ // эта отладка для принудительного открытия позиций
 
 #ifdef DEF_DEBUG_FORCE_OPEN_DEAL
 static bool need_open_deal = true;
 #endif
+
+/* Oblect types */
+#define OBJ_TYPE_TREND       1
+#define OBJ_TYPE_TREND_ARRAY 2
 
 //+------------------------------------------------------------------+
 //| Входные параметры
@@ -59,13 +68,19 @@ const string label_trend = "labelTrend";
 
 const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
 
-const string trend_name_template = "TREND";
+const string trend_name_template = "Trendline";
 
 //+------------------------------------------------------------------+
 //| Static parameters
 //+------------------------------------------------------------------+
 ulong order_ticket = 0;
 ExpertStatusEnum expert_status = ESE_WaitOpenDeal; // статус эксперта
+
+//+------------------------------------------------------------------+
+//| Dynamic parameters
+//+------------------------------------------------------------------+
+CDictionary trend_dict(10);
+
 
 #ifdef DEF_SHOW_DEBUG_STATUS
 string text_debug_status;
@@ -250,6 +265,84 @@ void printLog(LogLevelEnum level_log, string fn_name, int fn_line, string text)
 #define PRINT_RESULT(result) printLog(LOG_Info, __FUNCTION__, __LINE__, StringFormat("retcode=%u; deal=%I64u; order=%I64u", result.retcode, result.deal, result.order));
 
 //+------------------------------------------------------------------+
+// class Trend
+//+------------------------------------------------------------------+
+#define TREND_POINTS_CNT 2
+
+class Trend : public CObject
+{
+  public:    
+    Trend(datetime dt0, double price0, datetime dt1, double price1);
+   
+    virtual int Type(void) const { return OBJ_TYPE_TREND; }       
+    
+    void setPoint(int index, datetime dt, double price);
+    void getPoint(int index, datetime &dt, double &price);
+    
+    void setCross(bool c) { cross = c; }
+    bool getCross(void) const { return cross; }
+    
+    double getTrendPriceByDatetime(datetime dt);
+    
+  private:  
+    struct TrendPoint {
+      datetime dt;
+      double price;
+    };
+    
+    TrendPoint points[TREND_POINTS_CNT];
+    bool cross;
+};
+//+------------------------------------------------------------------+
+
+Trend::Trend(datetime dt0, double price0, datetime dt1, double price1) : cross(false)
+{  
+  setPoint(0, dt0, price0);
+  setPoint(1, dt1, price1);
+}
+//+------------------------------------------------------------------+
+
+void Trend::setPoint(int index, datetime dt, double price)
+{
+  if (index < TREND_POINTS_CNT)
+  {
+    points[index].dt = dt;
+    points[index].price = price;
+    
+    PRINT_DEBUG(LOG_Info, "Trend::setPoint[" + IntegerToString(index) + "] dt=" + IntegerToString(dt)+ " " + TimeToString(dt) + " price=" + DoubleToString(price));
+    
+  } else
+    PRINT_LOG(LOG_Error, "invalid index");
+}
+//+------------------------------------------------------------------+
+
+void Trend::getPoint(int index, datetime &dt, double &price)
+{
+  if (index < TREND_POINTS_CNT)
+  {
+    dt = points[index].dt;
+    price = points[index].price;
+  } else
+    PRINT_LOG(LOG_Error, "invalid index");
+}
+//+------------------------------------------------------------------+
+
+double Trend::getTrendPriceByDatetime(datetime dt)
+{
+  // double getLineX(double x1, double y1, double x2, double y2, double y)
+  //   return (y-y1)/(y2-y1)*(x2-x1)+x1;
+  
+  // Проверка: должен быть 2.0 при правильной работе функции getTrendPriceByDatetime(3)
+  // Trend trend_debug(1, 1.0, 5, 3.0);
+  // PRINT_LOG(LOG_Info, "OnChartEvent: dt_curr_debug:" + " price=" + priceToStr(trend_debug.getTrendPriceByDatetime(3)));
+      
+  // return ((double)(dt-points[0].dt))/(((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price);
+  return ((double)(dt-points[0].dt))/((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price;
+}
+//+------------------------------------------------------------------+
+
+
+//+------------------------------------------------------------------+
 //| Создает метку на экране
 //+------------------------------------------------------------------+
 void CreateLabel(long chart_id, string name, string text, int corner, int x, int y,
@@ -321,7 +414,7 @@ bool getCurrentMinute(datetime &dt)
 //+-----------------------------------------------------------------+
 //| Возвращает текущую цену
 //+-----------------------------------------------------------------+
-bool getCurrentPrice(double &ask, double &bid)
+bool getCurrentPrice(double &ask, double &bid, datetime &dt)
 {
   MqlTick last_tick = {0};
 
@@ -329,6 +422,7 @@ bool getCurrentPrice(double &ask, double &bid)
   {
     ask = last_tick.ask;
     bid = last_tick.bid;
+    dt = last_tick.time;
 
     return true;
   } else
@@ -585,6 +679,35 @@ void checkCurrentPrice(double ask, double bid)
 }
 
 //+------------------------------------------------------------------+
+//| Проверяет текущую цену для отправки уведомления
+//+------------------------------------------------------------------+
+void checkSendNotification(double ask, double bid, datetime dt)
+{
+  Trend * trend;
+  double trend_price;
+  static double prev_bid = bid;
+ 
+  for (trend = trend_dict.GetFirstNode(); trend != NULL; trend = trend_dict.GetNextNode())
+  { 
+    string name;   
+    trend_price = trend.getTrendPriceByDatetime(dt);        
+    
+    if ( (trend_price >= prev_bid && trend_price <= bid) ||
+         (trend_price <= prev_bid && trend_price >= bid))
+    {      
+      trend_dict.GetCurrentKey(name);      
+      
+      if (!trend.getCross()) {
+        trend.setCross(true);
+        PRINT_LOG(LOG_Info, "  BEEP: " + name);
+      }
+    }
+  }
+  
+  prev_bid = bid; // save old price
+}
+
+//+------------------------------------------------------------------+
 //| Вычисляем сумму депозита, которым можно рискнуть
 //+------------------------------------------------------------------+
 double calcDepositRisk()
@@ -677,76 +800,6 @@ bool TrendCreate(const long chart_ID=0, // ID графика
 }
 //+------------------------------------------------------------------+
 
-#define TREND_POINTS_CNT 2
-
-class Trend {
-  public:
-    Trend(datetime dt0, double price0,datetime dt1, double price1);
-    
-    void setPoint(int index, datetime dt, double price);
-    void getPoint(int index, datetime &dt, double &price);
-    
-    double getTrendPriceByDatetime(datetime dt);
-    
-    int getTrendPoints() { return TREND_POINTS_CNT; }
-    
-  private:  
-    struct TrendPoint {
-      datetime dt;
-      double price;
-    };
-
-    TrendPoint points[TREND_POINTS_CNT];
-};
-//+------------------------------------------------------------------+
-
-Trend::Trend(datetime dt0, double price0,datetime dt1, double price1)
-{  
-  setPoint(0, dt0, price0);
-  setPoint(1, dt1, price1);
-}
-//+------------------------------------------------------------------+
-
-void Trend::setPoint(int index, datetime dt, double price)
-{
-  if (index < TREND_POINTS_CNT)
-  {
-    points[index].dt = dt;
-    points[index].price = price;
-    
-    PRINT_DEBUG(LOG_Info, "Trend::setPoint[" + IntegerToString(index) + "] dt=" + IntegerToString(dt)+ " " + TimeToString(dt) + " price=" + DoubleToString(price));
-    
-  } else
-    PRINT_LOG(LOG_Error, "invalid index");
-}
-//+------------------------------------------------------------------+
-
-void Trend::getPoint(int index, datetime &dt, double &price)
-{
-  if (index < TREND_POINTS_CNT)
-  {
-    dt = points[index].dt;
-    price = points[index].price;
-  } else
-    PRINT_LOG(LOG_Error, "invalid index");
-}
-//+------------------------------------------------------------------+
-
-double Trend::getTrendPriceByDatetime(datetime dt)
-{
-  // double getLineX(double x1, double y1, double x2, double y2, double y)
-  //   return (y-y1)/(y2-y1)*(x2-x1)+x1;
-  
-  // Проверка: должен быть 2.0 при правильной работе функции getTrendPriceByDatetime(3)
-  // Trend trend_debug(1, 1.0, 5, 3.0);
-  // PRINT_LOG(LOG_Info, "OnChartEvent: dt_curr_debug:" + " price=" + priceToStr(trend_debug.getTrendPriceByDatetime(3)));
-      
-  // return ((double)(dt-points[0].dt))/(((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price);
-  return ((double)(dt-points[0].dt))/((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price;
-}
-//+------------------------------------------------------------------+
-
-// #include <Generic\ArrayList.mqh>
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -763,7 +816,7 @@ int OnInit()
   getTrendEmptyPoints(time1, price1, time2, price2);
   TrendCreate(DEF_CHART_ID, trend_line_name_up, 0, time1, price1, time2, price2);*/
  
-
+  
 
 #ifdef DEF_SHOW_DEBUG_STATUS
   CreateLabel(DEF_CHART_ID, label_status, "Balance: ", 0, 5, 20, clrYellow);
@@ -795,14 +848,17 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
+  double ask, bid;
+  datetime dt;
+
+  getCurrentPrice(ask, bid, dt);
+
+  checkSendNotification(ask, bid, dt);
+
   // Если есть установленная позиция
   if (PositionSelect(DEF_SYMBOL))
-  {
-    double ask, bid;
-
-    getCurrentPrice(ask, bid);
+  {    
     checkCurrentPrice(ask, bid);
-
     return;
   }
 
@@ -926,11 +982,13 @@ void OnChartEvent(const int id,
                   const double &dparam,
                   const string &sparam)
 {  
-  if (id == CHARTEVENT_OBJECT_DRAG)
+  if (CHARTEVENT_OBJECT_DRAG == id)
   {
     if (StringFind(sparam, trend_name_template) >= 0 && ObjectFind(DEF_CHART_ID, sparam) >= 0)
     {
-      datetime dt[TREND_POINTS_CNT], dt_curr;
+      uint i;
+      Trend * trend;
+      datetime dt[TREND_POINTS_CNT];
       double price[TREND_POINTS_CNT];
       string trend_name = sparam;
       
@@ -940,14 +998,35 @@ void OnChartEvent(const int id,
       price[0] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 0);
       price[1] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 1);
 
-      PRINT_LOG(LOG_Info, "OnChartEvent:" + IntegerToString(id) + " Found trend:" + sparam);
+      PRINT_LOG(LOG_Info, "OnChartEvent:" + IntegerToString(id) + " Trend line:" + trend_name);
       
-      Trend trend(dt[0], price[0], dt[1], price[1]);
+      for (i = 0; i < TREND_POINTS_CNT; i++) {
+        PRINT_LOG(LOG_Info, "  point[" + IntegerToString(i) + "]: dt=" + TimeToString(dt[i]) + "; price=" + priceToStr(price[i]));
+      }
       
-      dt_curr = TimeCurrent();      
+      trend = trend_dict.GetObjectByKey(trend_name);
+      
+      if (NULL == trend) {
+      
+        trend = new Trend(dt[0], price[0], dt[1], price[1]);
+        
+        if (trend_dict.AddObject(trend_name, trend)) {
+          PRINT_LOG(LOG_Info, "  Trend line " + trend_name + " was added successfully");
+        } else {
+          PRINT_LOG(LOG_Error, "  Can`t add trend line " + trend_name);
+          delete trend;
+        }        
+      } else {
+        PRINT_LOG(LOG_Info, "  Trend line '" + trend_name + "': points was moved");
+        trend.setPoint(0, dt[0], price[0]);
+        trend.setPoint(1, dt[1], price[1]);
+      }
+/*          
+      Trend trend(dt[0], price[0], dt[1], price[1]);      
+      datetime dt_curr = TimeCurrent();
       
       PRINT_LOG(LOG_Info, "OnChartEvent: dt_curr:" + TimeToString(dt_curr) + " price=" + priceToStr(trend.getTrendPriceByDatetime(dt_curr)));
-
+*/
 
     }
   }
