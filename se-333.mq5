@@ -816,23 +816,76 @@ bool TrendCreate(const long chart_ID=0, // ID графика
 }
 //+------------------------------------------------------------------+
 
+bool addNotificationTrend(const string &trend_name)
+{
+  uint i;
+  Trend * trend;
+  datetime dt[TREND_POINTS_CNT];
+  double price[TREND_POINTS_CNT];
+    
+  if (ObjectFind(DEF_CHART_ID, trend_name) >= 0)
+  {
+    dt[0] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_name, OBJPROP_TIME, 0);
+    dt[1] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_name, OBJPROP_TIME, 1);
+  
+    price[0] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 0);
+    price[1] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 1);
+
+    trend = dict_notification.GetObjectByKey(trend_name);
+  
+    if (NULL == trend)
+    {  
+      trend = new Trend(dt[0], price[0], dt[1], price[1]);
+  
+      if (dict_notification.AddObject(trend_name, trend)) {
+        PRINT_LOG(LOG_Info, "  Notification line " + trend_name + " was added successfully");
+        showNotificationStatus();        
+      } else {
+        PRINT_LOG(LOG_Error, "  Can`t add trend line " + trend_name);
+        delete trend;
+        trend = NULL;
+      }
+    } else {
+      PRINT_LOG(LOG_Info, "  Notification line '" + trend_name + "': points was moved");
+      trend.setPoint(0, dt[0], price[0]);
+      trend.setPoint(1, dt[1], price[1]);
+    }
+
+    if (NULL != trend)
+    {
+      for (i = 0; i < TREND_POINTS_CNT; i++)
+        PRINT_LOG(LOG_Info, "  point[" + IntegerToString(i) + "]: dt=" + TimeToString(dt[i]) + "; price=" + priceToStr(price[i]));
+
+      return true;
+    }
+  }
+  
+  return false;
+}
+//+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
-  // CArrayList<int> arrayList = new CArrayList<int>();
-
- //SendNotification("TEST-111");
- // double x = getLineX(1.0, 1.0, 5.0, 3.0,   2.0); x - должен быть 3.0 при правильной работе функции
- // Трендовая линия OBJ_TREND ObjectGetTimeByValue
+  //SendNotification("TEST-111");
 
   /*datetime time1; double price1; datetime time2; double price2;
   getTrendEmptyPoints(time1, price1, time2, price2);
   TrendCreate(DEF_CHART_ID, trend_line_name_up, 0, time1, price1, time2, price2);*/
 
-
+  string curr_obj;
+  
+  for (int i = 0; i < ObjectsTotal(DEF_CHART_ID, -1, OBJ_TREND); i++)
+  {
+    curr_obj = ObjectName(0, i, -1, OBJ_TREND);
+    
+    if (StringFind(curr_obj, trend_name_template) >= 0)
+    {
+      addNotificationTrend(curr_obj);
+    }
+  }
 
 #ifdef DEF_SHOW_DEBUG_STATUS
   CreateLabel(DEF_CHART_ID, label_status, "Balance: ", 0, 5, 20, clrYellow);  
@@ -844,6 +897,7 @@ int OnInit()
     PRINT_LOG(LOG_Error, "Init CHART_EVENTS error: " + IntegerToString(GetLastError()));
   } else {
     CreateLabel(DEF_CHART_ID, label_notify_status, "Notification: ", 0, 5, 40, clrYellow);
+    showNotificationStatus();
   }
 
   setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
@@ -1005,66 +1059,43 @@ void OnChartEvent(const int id,
                   const double &dparam,
                   const string &sparam)
 {
-  //PRINT_LOG(LOG_Info, "  OnChartEvent(" + IntegerToString(id) + "): " + sparam);
+  //PRINT_LOG(LOG_Info, "  OnChartEvent(" + IntegerToString(id) + "): " + sparam);  
 
   if (CHARTEVENT_OBJECT_DRAG == id)
   {
-    if (StringFind(sparam, trend_name_template) >= 0 && ObjectFind(DEF_CHART_ID, sparam) >= 0)
+    if (StringFind(sparam, trend_name_template) >= 0)
     {
-      uint i;
-      Trend * trend;
-      datetime dt[TREND_POINTS_CNT];
-      double price[TREND_POINTS_CNT];
-      string trend_name = sparam;
-
-      dt[0] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_name, OBJPROP_TIME, 0);
-      dt[1] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_name, OBJPROP_TIME, 1);
-
-      price[0] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 0);
-      price[1] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 1);
-
-      PRINT_LOG(LOG_Info, "OnChartEvent:" + IntegerToString(id) + " Notification line:" + trend_name);
-
-      for (i = 0; i < TREND_POINTS_CNT; i++) {
-        PRINT_LOG(LOG_Info, "  point[" + IntegerToString(i) + "]: dt=" + TimeToString(dt[i]) + "; price=" + priceToStr(price[i]));
-      }
-
-      trend = dict_notification.GetObjectByKey(trend_name);
-
-      if (NULL == trend) {
-
-        trend = new Trend(dt[0], price[0], dt[1], price[1]);
-
-        if (dict_notification.AddObject(trend_name, trend)) {
-          PRINT_LOG(LOG_Info, "  Notification line " + trend_name + " was added successfully");
-          showNotificationStatus();
-        } else {
-          PRINT_LOG(LOG_Error, "  Can`t add trend line " + trend_name);
-          delete trend;
-        }
-      } else {
-        PRINT_LOG(LOG_Info, "  Notification line '" + trend_name + "': points was moved");
-        trend.setPoint(0, dt[0], price[0]);
-        trend.setPoint(1, dt[1], price[1]);
-      }
+      addNotificationTrend(sparam);
     }
   } else if (CHARTEVENT_OBJECT_DELETE == id) {
     if (StringFind(sparam, trend_name_template) >= 0)
     {
-      Trend * trend;
-      string trend_name = sparam;
+      Trend * trend;      
       
-      trend = dict_notification.GetObjectByKey(trend_name);
+      trend = dict_notification.GetObjectByKey(sparam);
       
       if (dict_notification.DeleteCurrentNode())
       {
-        PRINT_LOG(LOG_Info, "  Notification line " + trend_name + " was deleted");
+        PRINT_LOG(LOG_Info, "  Notification line " + sparam + " was deleted");
         showNotificationStatus();
       }
     }
   }
 }
 //+------------------------------------------------------------------+
+
+
+//+------------------------------------------------------------------+
+//| Передача массива объектов
+
+//+------------------------------------------------------------------+
+// void PrintObjectsArray(Foo &objects[])
+
+//+------------------------------------------------------------------+
+//| Передача массива указателей на объект
+
+//+------------------------------------------------------------------+
+// void PrintPointersArray(Foo* &objects[])
 
 /*
 //+------------------------------------------------------------------+
