@@ -64,7 +64,7 @@ const double param_real_dist_stop  = 0.0010; // расстояние от уст
 const double param_djitter         = 0.0003; // джитер при котором не изменяются SL/TP
 
 const string label_status = "labelStatus";
-const string label_trend = "labelTrend";
+const string label_notify_status = "labelNotifyStatus";
 
 const string log_level_names[] = {"ERROR", "WARNING", "INFO"};
 
@@ -79,7 +79,7 @@ ExpertStatusEnum expert_status = ESE_WaitOpenDeal; // статус экспер�
 //+------------------------------------------------------------------+
 //| Dynamic parameters
 //+------------------------------------------------------------------+
-CDictionary trend_dict(10);
+CDictionary dict_notification(10);
 
 
 #ifdef DEF_SHOW_DEBUG_STATUS
@@ -258,6 +258,15 @@ void printLog(LogLevelEnum level_log, string fn_name, int fn_line, string text)
 }
 
 //+-----------------------------------------------------------------+
+//| Показывает Notification статус
+//+-----------------------------------------------------------------+
+void showNotificationStatus(string text = NULL)
+{
+  setLabelText(DEF_CHART_ID, label_notify_status, "Notification: " + 
+    IntegerToString(dict_notification.Total()) + " " + text);
+}
+
+//+-----------------------------------------------------------------+
 //| Выводит результат работы
 //+-----------------------------------------------------------------+
 #define PRINT_LOG(log_level, str) printLog(log_level, __FUNCTION__, __LINE__, str);
@@ -271,32 +280,32 @@ void printLog(LogLevelEnum level_log, string fn_name, int fn_line, string text)
 
 class Trend : public CObject
 {
-  public:    
+  public:
     Trend(datetime dt0, double price0, datetime dt1, double price1);
-   
-    virtual int Type(void) const { return OBJ_TYPE_TREND; }       
-    
+
+    virtual int Type(void) const { return OBJ_TYPE_TREND; }
+
     void setPoint(int index, datetime dt, double price);
     void getPoint(int index, datetime &dt, double &price);
-    
+
     void setCrossed(datetime dt) { cross = dt; }
     bool wasCrossed(datetime dt) const;
-    
+
     double getTrendPriceByDatetime(datetime dt);
-    
-  private:  
+
+  private:
     struct TrendPoint {
       datetime dt;
       double price;
     };
-    
+
     TrendPoint points[TREND_POINTS_CNT];
     datetime cross;
 };
 //+------------------------------------------------------------------+
 
 Trend::Trend(datetime dt0, double price0, datetime dt1, double price1) : cross(0)
-{  
+{
   setPoint(0, dt0, price0);
   setPoint(1, dt1, price1);
 }
@@ -308,11 +317,7 @@ void Trend::setPoint(int index, datetime dt, double price)
   {
     points[index].dt = dt;
     points[index].price = price;
-    
-    PRINT_DEBUG(LOG_Info, "Trend::setPoint[" + IntegerToString(index) + "] dt=" + IntegerToString(dt)+ " " + TimeToString(dt) + " price=" + DoubleToString(price));
-    
-  } else
-    PRINT_LOG(LOG_Error, "invalid index");
+  }
 }
 //+------------------------------------------------------------------+
 
@@ -322,18 +327,17 @@ void Trend::getPoint(int index, datetime &dt, double &price)
   {
     dt = points[index].dt;
     price = points[index].price;
-  } else
-    PRINT_LOG(LOG_Error, "invalid index");
+  }
 }
 //+------------------------------------------------------------------+
 
 double Trend::getTrendPriceByDatetime(datetime dt)
 {
-  if ( points[1].dt > points[0].dt ? points[0].dt <= dt && dt <= points[1].dt : 
+  if ( points[1].dt > points[0].dt ? points[0].dt <= dt && dt <= points[1].dt :
                                      points[0].dt >= dt && dt >= points[1].dt )
-                                     
+
     return ((double)(dt-points[0].dt))/((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price;
-  
+
   return 0.0;
 }
 //+------------------------------------------------------------------+
@@ -688,34 +692,34 @@ void checkSendNotification(double ask, double bid, datetime dt)
   Trend * trend;
   double trend_price;
   static double prev_bid = bid;
- 
-  for (trend = trend_dict.GetFirstNode(); trend != NULL; trend = trend_dict.GetNextNode())
-  { 
+
+  for (trend = dict_notification.GetFirstNode(); trend != NULL; trend = dict_notification.GetNextNode())
+  {
     string name;
     bool cross_up, cross_down;
-    
-    trend_price = trend.getTrendPriceByDatetime(dt);        
-    
+
+    trend_price = trend.getTrendPriceByDatetime(dt);
+
     if (!isZeroPrice(trend_price))
     {
       cross_up   = trend_price >= prev_bid && trend_price <= bid;
       cross_down = trend_price <= prev_bid && trend_price >= bid;
-      
+
       if (cross_up || cross_down)
       {
-        trend_dict.GetCurrentKey(name);      
+        dict_notification.GetCurrentKey(name);
 
         if (!trend.wasCrossed(dt))
-        {        
+        {
           trend.setCrossed(dt);
-          
+
           PRINT_LOG(LOG_Info, "  BEEP: " + name + (cross_up ? "↑" : "↓") + " - " + priceToStr(bid));
           SendNotification("BEEP: " + name + (cross_up ? "↑" : "↓") + " - " + priceToStr(bid));
         }
-      }      
+      }
     }
   }
-  
+
   prev_bid = bid; // save old price
 }
 
@@ -754,7 +758,7 @@ void getTrendEmptyPoints(datetime &time1,double &price1,
  if(!price2)
  price2=price1;
  }
- 
+
 //+------------------------------------------------------------------+
 //| Создает линию тренда по заданным координатам
 //+------------------------------------------------------------------+
@@ -775,14 +779,14 @@ bool TrendCreate(const long chart_ID=0, // ID графика
     const bool hidden=true, // скрыт в списке объектов
     const long z_order=0) // приоритет на нажатие мышью
 {
-  
+
   //--- создадим трендовую линию по заданным координатам
   if(!ObjectCreate(chart_ID,name,OBJ_TREND,sub_window,time1,price1,time2,price2))
   {
     Print(__FUNCTION__, ": не удалось создать линию тренда! Код ошибки = ",GetLastError());
     return(false);
   }
-  
+
   //--- установим цвет линии
   ObjectSetInteger(chart_ID,name,OBJPROP_COLOR,clr);
   //--- установим стиль отображения линии
@@ -794,7 +798,7 @@ bool TrendCreate(const long chart_ID=0, // ID графика
   //--- включим (true) или отключим (false) режим перемещения линии мышью
   //--- при создании графического объекта функцией ObjectCreate, по умолчанию объект
   //--- нельзя выделить и перемещать. Внутри же этого метода параметр selection
-  
+
   //--- по умолчанию равен true, что позволяет выделять и перемещать этот объект
   ObjectSetInteger(chart_ID,name,OBJPROP_SELECTABLE,selection);
   ObjectSetInteger(chart_ID,name,OBJPROP_SELECTED,selection);
@@ -807,7 +811,7 @@ bool TrendCreate(const long chart_ID=0, // ID графика
   //--- установим приоритет на получение события нажатия мыши на графике
   ObjectSetInteger(chart_ID,name,OBJPROP_ZORDER,z_order);
   //--- успешное выполнение
-  
+
   return(true);
 }
 //+------------------------------------------------------------------+
@@ -819,21 +823,28 @@ bool TrendCreate(const long chart_ID=0, // ID графика
 int OnInit()
 {
   // CArrayList<int> arrayList = new CArrayList<int>();
-  
- //SendNotification("TEST-111"); 
+
+ //SendNotification("TEST-111");
  // double x = getLineX(1.0, 1.0, 5.0, 3.0,   2.0); x - должен быть 3.0 при правильной работе функции
  // Трендовая линия OBJ_TREND ObjectGetTimeByValue
 
-  /*datetime time1; double price1; datetime time2; double price2;  
+  /*datetime time1; double price1; datetime time2; double price2;
   getTrendEmptyPoints(time1, price1, time2, price2);
   TrendCreate(DEF_CHART_ID, trend_line_name_up, 0, time1, price1, time2, price2);*/
- 
-  
+
+
 
 #ifdef DEF_SHOW_DEBUG_STATUS
-  CreateLabel(DEF_CHART_ID, label_status, "Balance: ", 0, 5, 20, clrYellow);
-  CreateLabel(DEF_CHART_ID, label_trend, "INFO:", 0, 5, 40, clrYellow);
+  CreateLabel(DEF_CHART_ID, label_status, "Balance: ", 0, 5, 20, clrYellow);  
 #endif
+
+  if (!ChartSetInteger(DEF_CHART_ID, CHART_EVENT_OBJECT_CREATE, 0, true) ||
+      !ChartSetInteger(DEF_CHART_ID, CHART_EVENT_OBJECT_DELETE, 0, true))
+  {
+    PRINT_LOG(LOG_Error, "Init CHART_EVENTS error: " + IntegerToString(GetLastError()));
+  } else {
+    CreateLabel(DEF_CHART_ID, label_notify_status, "Notification: ", 0, 5, 40, clrYellow);
+  }
 
   setExpertStatus(ESE_WaitOpenDeal); // ожидаем появления позиции
 
@@ -869,7 +880,7 @@ void OnTick()
 
   // Если есть установленная позиция
   if (PositionSelect(DEF_SYMBOL))
-  {    
+  {
     checkCurrentPrice(ask, bid);
     return;
   }
@@ -885,10 +896,10 @@ void OnTick()
     sl = 0.0;
 
     // Получаем текущую цену
-    getCurrentPrice(ask, bid);    
+    getCurrentPrice(ask, bid);
     if (bid < 1.1490)
       return;
-      
+
     /* type = POSITION_TYPE_BUY; tp = 1.1490; sl = 1.1412; */
     type = POSITION_TYPE_SELL; tp = 1.1450; sl = 1.1543;
 
@@ -993,7 +1004,9 @@ void OnChartEvent(const int id,
                   const long &lparam,
                   const double &dparam,
                   const string &sparam)
-{  
+{
+  //PRINT_LOG(LOG_Info, "  OnChartEvent(" + IntegerToString(id) + "): " + sparam);
+
   if (CHARTEVENT_OBJECT_DRAG == id)
   {
     if (StringFind(sparam, trend_name_template) >= 0 && ObjectFind(DEF_CHART_ID, sparam) >= 0)
@@ -1003,43 +1016,51 @@ void OnChartEvent(const int id,
       datetime dt[TREND_POINTS_CNT];
       double price[TREND_POINTS_CNT];
       string trend_name = sparam;
-      
+
       dt[0] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_name, OBJPROP_TIME, 0);
       dt[1] = (datetime)ObjectGetInteger(DEF_CHART_ID, trend_name, OBJPROP_TIME, 1);
 
       price[0] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 0);
       price[1] = ObjectGetDouble(DEF_CHART_ID, trend_name, OBJPROP_PRICE, 1);
 
-      PRINT_LOG(LOG_Info, "OnChartEvent:" + IntegerToString(id) + " Trend line:" + trend_name);
-      
+      PRINT_LOG(LOG_Info, "OnChartEvent:" + IntegerToString(id) + " Notification line:" + trend_name);
+
       for (i = 0; i < TREND_POINTS_CNT; i++) {
         PRINT_LOG(LOG_Info, "  point[" + IntegerToString(i) + "]: dt=" + TimeToString(dt[i]) + "; price=" + priceToStr(price[i]));
       }
-      
-      trend = trend_dict.GetObjectByKey(trend_name);
-      
+
+      trend = dict_notification.GetObjectByKey(trend_name);
+
       if (NULL == trend) {
-      
+
         trend = new Trend(dt[0], price[0], dt[1], price[1]);
-        
-        if (trend_dict.AddObject(trend_name, trend)) {
-          PRINT_LOG(LOG_Info, "  Trend line " + trend_name + " was added successfully");
+
+        if (dict_notification.AddObject(trend_name, trend)) {
+          PRINT_LOG(LOG_Info, "  Notification line " + trend_name + " was added successfully");
+          showNotificationStatus();
         } else {
           PRINT_LOG(LOG_Error, "  Can`t add trend line " + trend_name);
           delete trend;
-        }        
+        }
       } else {
-        PRINT_LOG(LOG_Info, "  Trend line '" + trend_name + "': points was moved");
+        PRINT_LOG(LOG_Info, "  Notification line '" + trend_name + "': points was moved");
         trend.setPoint(0, dt[0], price[0]);
         trend.setPoint(1, dt[1], price[1]);
       }
-/*          
-      Trend trend(dt[0], price[0], dt[1], price[1]);      
-      datetime dt_curr = TimeCurrent();
+    }
+  } else if (CHARTEVENT_OBJECT_DELETE == id) {
+    if (StringFind(sparam, trend_name_template) >= 0)
+    {
+      Trend * trend;
+      string trend_name = sparam;
       
-      PRINT_LOG(LOG_Info, "OnChartEvent: dt_curr:" + TimeToString(dt_curr) + " price=" + priceToStr(trend.getTrendPriceByDatetime(dt_curr)));
-*/
-
+      trend = dict_notification.GetObjectByKey(trend_name);
+      
+      if (dict_notification.DeleteCurrentNode())
+      {
+        PRINT_LOG(LOG_Info, "  Notification line " + trend_name + " was deleted");
+        showNotificationStatus();
+      }
     }
   }
 }
