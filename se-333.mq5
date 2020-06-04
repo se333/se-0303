@@ -5,8 +5,6 @@
 //+------------------------------------------------------------------+
 
 #include <Object.mqh>
-//#include <Arrays\List.mqh>
-//#include <Arrays\ArrayObj.mqh>
 #include "Dictionary.mqh"
 
 //+------------------------------------------------------------------+
@@ -16,6 +14,7 @@
 #define DEF_SYMBOL                 Symbol()
 
 #define DEF_WAIT_OPEN_DEAL_TIME    3 // время в секундах, которое ожидаем открытие позиции
+#define DEF_TIME_CROSS_SLEEP     180 // время в секундах, на которое засыпаем перед отправкой следующего сообщение о пересечении тренда
 
 /**/#define DEF_SHOW_EXPERT_STATUS
 #define DEF_SHOW_DEBUG_STATUS/**/
@@ -30,10 +29,11 @@ static bool need_open_deal = true;
 #define OBJ_TYPE_TREND       1
 #define OBJ_TYPE_TREND_ARRAY 2
 
+
 //+------------------------------------------------------------------+
 //| Входные параметры
 //+------------------------------------------------------------------+
-input double input_real_balance = 133.0; // баланс
+input double input_real_balance = 100.0; // баланс
 input int input_cur_attemp      = 1;     // номер текущей попытки выиграть (5..1)
 
 //+------------------------------------------------------------------+
@@ -279,8 +279,8 @@ class Trend : public CObject
     void setPoint(int index, datetime dt, double price);
     void getPoint(int index, datetime &dt, double &price);
     
-    void setCross(bool c) { cross = c; }
-    bool getCross(void) const { return cross; }
+    void setCrossed(datetime dt) { cross = dt; }
+    bool wasCrossed(datetime dt) const;
     
     double getTrendPriceByDatetime(datetime dt);
     
@@ -291,11 +291,11 @@ class Trend : public CObject
     };
     
     TrendPoint points[TREND_POINTS_CNT];
-    bool cross;
+    datetime cross;
 };
 //+------------------------------------------------------------------+
 
-Trend::Trend(datetime dt0, double price0, datetime dt1, double price1) : cross(false)
+Trend::Trend(datetime dt0, double price0, datetime dt1, double price1) : cross(0)
 {  
   setPoint(0, dt0, price0);
   setPoint(1, dt1, price1);
@@ -329,18 +329,20 @@ void Trend::getPoint(int index, datetime &dt, double &price)
 
 double Trend::getTrendPriceByDatetime(datetime dt)
 {
-  // double getLineX(double x1, double y1, double x2, double y2, double y)
-  //   return (y-y1)/(y2-y1)*(x2-x1)+x1;
+  if ( points[1].dt > points[0].dt ? points[0].dt <= dt && dt <= points[1].dt : 
+                                     points[0].dt >= dt && dt >= points[1].dt )
+                                     
+    return ((double)(dt-points[0].dt))/((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price;
   
-  // Проверка: должен быть 2.0 при правильной работе функции getTrendPriceByDatetime(3)
-  // Trend trend_debug(1, 1.0, 5, 3.0);
-  // PRINT_LOG(LOG_Info, "OnChartEvent: dt_curr_debug:" + " price=" + priceToStr(trend_debug.getTrendPriceByDatetime(3)));
-      
-  // return ((double)(dt-points[0].dt))/(((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price);
-  return ((double)(dt-points[0].dt))/((double)(points[1].dt-points[0].dt))*(points[1].price-points[0].price)+points[0].price;
+  return 0.0;
 }
 //+------------------------------------------------------------------+
 
+bool Trend::wasCrossed(datetime dt) const
+{
+  return cross + DEF_TIME_CROSS_SLEEP > dt;
+}
+//+------------------------------------------------------------------+
 
 //+------------------------------------------------------------------+
 //| Создает метку на экране
@@ -689,18 +691,28 @@ void checkSendNotification(double ask, double bid, datetime dt)
  
   for (trend = trend_dict.GetFirstNode(); trend != NULL; trend = trend_dict.GetNextNode())
   { 
-    string name;   
+    string name;
+    bool cross_up, cross_down;
+    
     trend_price = trend.getTrendPriceByDatetime(dt);        
     
-    if ( (trend_price >= prev_bid && trend_price <= bid) ||
-         (trend_price <= prev_bid && trend_price >= bid))
-    {      
-      trend_dict.GetCurrentKey(name);      
+    if (!isZeroPrice(trend_price))
+    {
+      cross_up   = trend_price >= prev_bid && trend_price <= bid;
+      cross_down = trend_price <= prev_bid && trend_price >= bid;
       
-      if (!trend.getCross()) {
-        trend.setCross(true);
-        PRINT_LOG(LOG_Info, "  BEEP: " + name);
-      }
+      if (cross_up || cross_down)
+      {
+        trend_dict.GetCurrentKey(name);      
+
+        if (!trend.wasCrossed(dt))
+        {        
+          trend.setCrossed(dt);
+          
+          PRINT_LOG(LOG_Info, "  BEEP: " + name + (cross_up ? "↑" : "↓") + " - " + priceToStr(bid));
+          SendNotification("BEEP: " + name + (cross_up ? "↑" : "↓") + " - " + priceToStr(bid));
+        }
+      }      
     }
   }
   
